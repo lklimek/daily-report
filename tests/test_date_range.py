@@ -1,9 +1,9 @@
-"""Functional tests for daily_report.py date range mode.
+"""Functional tests for daily_report date range mode.
 
-Each test runs the real daily_report.py against live GitHub data
+Each test runs the real daily_report package against live GitHub data
 (org=dashpay, user=lklimek) and verifies expected PRs appear or
 don't appear in the output. Test scenarios are documented in
-companion .md files in this directory.
+tests/scenarios/ directory.
 
 Requirements: gh CLI authenticated, network access.
 Run with: python3 -m pytest tests/test_date_range.py -v
@@ -15,22 +15,22 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parent.parent / "daily_report.py"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ORG = "dashpay"
 USER = "lklimek"
 
 
 def run_report(*extra_args: str) -> str:
-    """Run daily_report.py and return combined stdout+stderr."""
-    cmd = [sys.executable, str(SCRIPT), "--org", ORG, "--user", USER, *extra_args]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    """Run daily_report and return combined stdout+stderr."""
+    cmd = [sys.executable, "-m", "daily_report", "--org", ORG, "--user", USER, *extra_args]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=str(PROJECT_ROOT))
     return result.stdout + result.stderr, result.returncode
 
 
 def run_report_ok(*extra_args: str) -> str:
-    """Run daily_report.py, assert exit 0, return output."""
+    """Run daily_report, assert exit 0, return output."""
     output, rc = run_report(*extra_args)
-    assert rc == 0, f"daily_report.py exited with {rc}:\n{output}"
+    assert rc == 0, f"daily_report exited with {rc}:\n{output}"
     return output
 
 

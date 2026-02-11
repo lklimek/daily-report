@@ -1,4 +1,4 @@
-# daily_report.py
+# daily_report
 
 Daily GitHub PR report generator. Uses local git repos and GitHub GraphQL API to gather authored, contributed, reviewed PRs and pending review requests across a GitHub organization.
 
@@ -12,25 +12,25 @@ Daily GitHub PR report generator. Uses local git repos and GitHub GraphQL API to
 
 ```bash
 # Default: dashpay org, authenticated user, today
-./daily_report.py
+python -m daily_report
 
 # Specific date
-./daily_report.py --date 2026-02-10
+python -m daily_report --date 2026-02-10
 
 # Date range (inclusive)
-./daily_report.py --from 2026-02-01 --to 2026-02-07
+python -m daily_report --from 2026-02-01 --to 2026-02-07
 
 # Different org or user
-./daily_report.py --org myorg --user someone
+python -m daily_report --org myorg --user someone
 
 # Use local git repos from a directory (fastest mode)
-./daily_report.py --repos-dir ~/git
+python -m daily_report --repos-dir ~/git
 
 # Use a custom config file
-./daily_report.py --config ~/.config/daily-report/repos.yaml
+python -m daily_report --config ~/.config/daily-report/repos.yaml
 
 # Force API-only mode (skip local git)
-./daily_report.py --no-local
+python -m daily_report --no-local
 ```
 
 ## Options

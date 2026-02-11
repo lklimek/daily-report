@@ -15,9 +15,9 @@ import subprocess
 import sys
 from datetime import datetime, date
 
-from config import load_config, Config
-from git_local import discover_repos, fetch_repos, find_commits, extract_pr_numbers, RepoInfo
-from graphql_client import (
+from daily_report.config import load_config, Config
+from daily_report.git_local import discover_repos, fetch_repos, find_commits, extract_pr_numbers, RepoInfo
+from daily_report.graphql_client import (
     graphql_with_retry,
     build_pr_details_query,
     parse_pr_details_response,
