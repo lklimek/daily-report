@@ -102,8 +102,8 @@ def get_pr_detail(org, repo, number, jq_expr=None):
         return None
 
 
-def check_commits_for_user(org, repo, number, user, target_date):
-    """Check if user has commits on a PR on the target date."""
+def check_commits_for_user(org, repo, number, user, date_from, date_to):
+    """Check if user has commits on a PR within [date_from, date_to]."""
     try:
         commits = gh_json(["api", f"repos/{org}/{repo}/pulls/{number}/commits"])
     except RuntimeError:
@@ -112,26 +112,26 @@ def check_commits_for_user(org, repo, number, user, target_date):
         author_login = (commit.get("author") or {}).get("login", "")
         committer_login = (commit.get("committer") or {}).get("login", "")
         if author_login == user or committer_login == user:
-            # Check commit date
             commit_info = commit.get("commit", {})
             for date_field in ("author", "committer"):
                 date_str = (commit_info.get(date_field) or {}).get("date", "")
-                if date_str and date_str.startswith(target_date):
+                if date_str and date_from <= date_str[:10] <= date_to:
                     return True
     return False
 
 
-def check_review_activity(org, repo, number, user, target_date):
-    """Check if user has review or comment activity on a PR on the target date."""
+def check_review_activity(org, repo, number, user, date_from, date_to):
+    """Check if user has review or comment activity on a PR within [date_from, date_to]."""
     # Check reviews
     try:
         reviews_output = gh_command([
             "api", f"repos/{org}/{repo}/pulls/{number}/reviews",
-            "--jq", f'.[] | select(.user.login == "{user}") | .submitted_at + " " + .state',
+            "--jq", f'.[] | select(.user.login == "{user}") | .submitted_at',
         ])
         if reviews_output:
             for line in reviews_output.splitlines():
-                if line.startswith(target_date):
+                review_date = line.strip()[:10]
+                if date_from <= review_date <= date_to:
                     return True
     except RuntimeError:
         pass
@@ -140,10 +140,13 @@ def check_review_activity(org, repo, number, user, target_date):
     try:
         comments_output = gh_command([
             "api", f"repos/{org}/{repo}/issues/{number}/comments",
-            "--jq", f'.[] | select(.user.login == "{user}" and (.created_at | startswith("{target_date}"))) | .created_at',
+            "--jq", f'.[] | select(.user.login == "{user}") | .created_at',
         ])
         if comments_output:
-            return True
+            for line in comments_output.splitlines():
+                comment_date = line.strip()[:10]
+                if date_from <= comment_date <= date_to:
+                    return True
     except RuntimeError:
         pass
 
@@ -229,29 +232,60 @@ def main():
     parser.add_argument("--org", default="dashpay", help="GitHub organization (default: dashpay)")
     parser.add_argument("--user", default=None, help="GitHub username (default: authenticated user)")
     parser.add_argument("--date", default=None, help="Date in YYYY-MM-DD format (default: today)")
+    parser.add_argument("--from", dest="date_from", default=None, help="Start date in YYYY-MM-DD format (use with --to)")
+    parser.add_argument("--to", dest="date_to", default=None, help="End date in YYYY-MM-DD format (use with --from)")
     args = parser.parse_args()
 
     org = args.org
     user = args.user or get_current_user()
-    target_date = args.date or date.today().isoformat()
 
-    # Validate date format
-    try:
-        datetime.strptime(target_date, "%Y-%m-%d")
-    except ValueError:
-        print(f"Error: Invalid date format '{target_date}'. Use YYYY-MM-DD.", file=sys.stderr)
+    # Validate date arguments
+    if args.date and (args.date_from or args.date_to):
+        print("Error: --date cannot be combined with --from/--to.", file=sys.stderr)
         sys.exit(1)
+    if (args.date_from is None) != (args.date_to is None):
+        print("Error: --from and --to must be used together.", file=sys.stderr)
+        sys.exit(1)
+
+    def validate_date(d, label):
+        try:
+            datetime.strptime(d, "%Y-%m-%d")
+        except ValueError:
+            print(f"Error: Invalid date format '{d}' for {label}. Use YYYY-MM-DD.", file=sys.stderr)
+            sys.exit(1)
+
+    if args.date_from:
+        validate_date(args.date_from, "--from")
+        validate_date(args.date_to, "--to")
+        date_from = args.date_from
+        date_to = args.date_to
+    elif args.date:
+        validate_date(args.date, "--date")
+        date_from = args.date
+        date_to = args.date
+    else:
+        date_from = date.today().isoformat()
+        date_to = date_from
+
+    if date_from > date_to:
+        print(f"Error: --from date ({date_from}) must be <= --to date ({date_to}).", file=sys.stderr)
+        sys.exit(1)
+
+    is_range = date_from != date_to
 
     json_fields = ["repository", "title", "number", "state", "isDraft", "url", "updatedAt"]
     json_fields_with_author = json_fields + ["author"]
 
+    # Build date query string for gh search
+    date_query = f"{date_from}..{date_to}" if is_range else date_from
+
     # Step 1: Get authored PRs
     authored_created = gh_search(
-        [f"--author={user}", f"--created={target_date}", f"--owner={org}"],
+        [f"--author={user}", f"--created={date_query}", f"--owner={org}"],
         json_fields,
     )
     authored_updated = gh_search(
-        [f"--author={user}", f"--updated={target_date}", f"--owner={org}"],
+        [f"--author={user}", f"--updated={date_query}", f"--owner={org}"],
         json_fields,
     )
     authored_prs = deduplicate(authored_created + authored_updated)
@@ -260,11 +294,11 @@ def main():
 
     # Step 2: Get reviewed/commented PRs
     reviewed = gh_search(
-        [f"--reviewed-by={user}", f"--updated={target_date}", f"--owner={org}"],
+        [f"--reviewed-by={user}", f"--updated={date_query}", f"--owner={org}"],
         json_fields_with_author,
     )
     commented = gh_search(
-        [f"--commenter={user}", f"--updated={target_date}", f"--owner={org}"],
+        [f"--commenter={user}", f"--updated={date_query}", f"--owner={org}"],
         json_fields_with_author,
     )
     candidate_prs = deduplicate(reviewed + commented)
@@ -277,17 +311,17 @@ def main():
     for pr in candidate_prs:
         repo = repo_name(pr)
         number = pr["number"]
-        if check_commits_for_user(org, repo, number, user, target_date):
+        if check_commits_for_user(org, repo, number, user, date_from, date_to):
             contributed_prs.append(pr)
         else:
             remaining_prs.append(pr)
 
-    # Step 4: Verify review activity is from today
+    # Step 4: Verify review activity is within date range
     reviewed_prs = []
     for pr in remaining_prs:
         repo = repo_name(pr)
         number = pr["number"]
-        if check_review_activity(org, repo, number, user, target_date):
+        if check_review_activity(org, repo, number, user, date_from, date_to):
             reviewed_prs.append(pr)
 
     # Step 5 & 6: Get stats and merged info for authored/contributed PRs
@@ -354,8 +388,8 @@ def main():
             created_at = pr.get("createdAt", "")
             try:
                 created_date = datetime.strptime(created_at[:10], "%Y-%m-%d").date()
-                today = datetime.strptime(target_date, "%Y-%m-%d").date()
-                days_waiting = max(0, (today - created_date).days)
+                ref_date = datetime.strptime(date_to, "%Y-%m-%d").date()
+                days_waiting = max(0, (ref_date - created_date).days)
             except (ValueError, TypeError):
                 days_waiting = 0
             waiting_prs.append({
@@ -385,7 +419,10 @@ def main():
     still_open = sum(1 for d in authored_details if d["status"] in ("Open", "Draft"))
 
     lines = []
-    lines.append(f"# Daily Report \u2014 {target_date}")
+    if is_range:
+        lines.append(f"# Daily Report \u2014 {date_from} .. {date_to}")
+    else:
+        lines.append(f"# Daily Report \u2014 {date_from}")
     lines.append("")
 
     # Authored / Contributed PRs
@@ -438,9 +475,10 @@ def main():
 
     # Summary
     themes_str = ", ".join(themes) if themes else "general development"
+    merged_label = "merged" if is_range else "merged today"
     lines.append(
         f"**Summary:** {total_prs} PRs across {len(all_repos)} repos, "
-        f"{merged_today} merged today, {still_open} still open. "
+        f"{merged_today} {merged_label}, {still_open} still open. "
         f"Key themes: {themes_str}."
     )
 
