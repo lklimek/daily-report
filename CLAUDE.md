@@ -13,7 +13,7 @@ Daily GitHub PR report generator. Hybrid local-git + GraphQL architecture (3-pha
 
 ## Project Structure
 
-- `daily_report/` — main package (`__main__.py`, `config.py`, `git_local.py`, `graphql_client.py`)
+- `daily_report/` — main package, source code of the app
 - `tests/` — `test_date_range.py` (functional, live GitHub), `test_graphql_client.py` (unit, mocked)
 - `tests/scenarios/` — test case documentation
 - `docs/` — design and research documents
@@ -30,7 +30,7 @@ Three phases: **local git discovery** → **GraphQL review search** → **GraphQ
 
 ## Conventions
 
-- **Commits:** conventional commits (`feat:`, `fix:`, `refactor:`, `chore:`, `docs:`), GPG-signed
+- **Commits:** conventional commits (`feat:`, `fix:`, `refactor:`, `chore:`, `docs:`), signed if possible
 - **Before committing:** always run `./test.sh` — all tests must pass
 - **Mock paths:** use full package prefix, e.g. `daily_report.graphql_client.subprocess.run`
 - **External commands:** via `subprocess.run()` with `capture_output=True`
