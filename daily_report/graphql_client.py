@@ -36,13 +36,17 @@ def graphql_query(query: str, variables: Optional[dict] = None) -> dict:
             capture_output=True,
             text=True,
             check=True,
+            timeout=60,
         )
     except FileNotFoundError:
         print("Error: gh CLI is not installed.", file=sys.stderr)
         sys.exit(1)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("gh api graphql timed out") from None
     except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "")[:500]
         raise RuntimeError(
-            f"gh api graphql failed:\n{e.stderr}"
+            f"gh api graphql failed:\n{stderr}"
         ) from e
 
     response = json.loads(result.stdout)
@@ -132,9 +136,11 @@ def build_pr_details_query(prs: list[tuple[str, str, int]]) -> str:
     """
     fragments = []
     for i, (org, repo, number) in enumerate(prs):
+        safe_org = _sanitize_graphql_string(org)
+        safe_repo = _sanitize_graphql_string(repo)
         fragments.append(
-            f'  pr_{i}: repository(owner: "{org}", name: "{repo}") {{\n'
-            f"    pullRequest(number: {number}) {{\n"
+            f'  pr_{i}: repository(owner: "{safe_org}", name: "{safe_repo}") {{\n'
+            f"    pullRequest(number: {int(number)}) {{\n"
             f"{_PR_DETAIL_FIELDS}\n"
             f"    }}\n"
             f"  }}"
@@ -182,10 +188,13 @@ def build_commit_to_pr_query(
     Returns:
         A GraphQL query string.
     """
+    safe_org = _sanitize_graphql_string(org)
+    safe_repo = _sanitize_graphql_string(repo)
     fragments = []
     for i, sha in enumerate(shas[:25]):
+        safe_sha = _sanitize_graphql_string(sha)
         fragments.append(
-            f'    c{i}: object(expression: "{sha}") {{\n'
+            f'    c{i}: object(expression: "{safe_sha}") {{\n'
             f"      ... on Commit {{\n"
             f"        oid\n"
             f"        associatedPullRequests(first: 5) {{\n"
@@ -200,7 +209,7 @@ def build_commit_to_pr_query(
         )
     return (
         "{\n"
-        f'  repository(owner: "{org}", name: "{repo}") {{\n'
+        f'  repository(owner: "{safe_org}", name: "{safe_repo}") {{\n'
         + "\n".join(fragments)
         + "\n  }\n}"
     )
@@ -369,6 +378,11 @@ query WaitingForReview($searchQuery: String!) {
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _sanitize_graphql_string(value: str) -> str:
+    """Escape characters that could break GraphQL string literals."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def _safe_alias(name: str) -> str:

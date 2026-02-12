@@ -97,8 +97,8 @@ def _detect_org_name(repo_path: str) -> tuple[str, str]:
 
 
 def _expand_path(path: str) -> str:
-    """Expand ~ and environment variables in a path."""
-    return os.path.expanduser(os.path.expandvars(path))
+    """Expand ~ and environment variables in a path, then resolve to real path."""
+    return os.path.realpath(os.path.expanduser(os.path.expandvars(path)))
 
 
 def _validate_repo(raw: dict, default_org: str) -> Optional[RepoConfig]:

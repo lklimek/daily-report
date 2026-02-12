@@ -12,6 +12,7 @@ Falls back to GraphQL-only mode when no local repos are configured.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, date
@@ -26,6 +27,7 @@ from daily_report.graphql_client import (
     parse_commit_to_pr_response,
     build_review_search_query,
     build_waiting_for_review_query,
+    _sanitize_graphql_string,
 )
 from daily_report.report_data import (
     ReportData, AuthoredPR, ReviewedPR, WaitingPR, SummaryStats,
@@ -50,13 +52,17 @@ def gh_command(args):
             capture_output=True,
             text=True,
             check=True,
+            timeout=60,
         )
         return result.stdout.strip()
     except FileNotFoundError:
         print("Error: gh CLI is not installed.", file=sys.stderr)
         sys.exit(1)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"gh command timed out: {' '.join(args)}") from None
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"gh command failed: {' '.join(args)}\n{e.stderr}") from e
+        stderr = (e.stderr or "")[:500]
+        raise RuntimeError(f"gh command failed: {' '.join(args)}\n{stderr}") from e
 
 
 def gh_json(args):
@@ -92,6 +98,11 @@ def extract_themes(titles):
                     found.append(prefix)
                 break
     return found
+
+
+def _safe_filename_part(value: str) -> str:
+    """Remove characters unsafe for filenames."""
+    return re.sub(r'[^a-zA-Z0-9._-]', '_', value)
 
 
 def format_status(state, is_draft, merged_at=None):
@@ -172,9 +183,11 @@ def _build_commit_check_query(prs_to_check):
         return None
     fragments = []
     for i, (org, repo, number) in enumerate(prs_to_check):
+        safe_org = _sanitize_graphql_string(org)
+        safe_repo = _sanitize_graphql_string(repo)
         fragments.append(
-            f'  pr_{i}: repository(owner: "{org}", name: "{repo}") {{\n'
-            f"    pullRequest(number: {number}) {{\n"
+            f'  pr_{i}: repository(owner: "{safe_org}", name: "{safe_repo}") {{\n'
+            f"    pullRequest(number: {int(number)}) {{\n"
             f"      number\n"
             f"      commits(first: 100) {{\n"
             f"        nodes {{\n"
@@ -718,10 +731,11 @@ def main():
         if args.slides_output:
             output_path = args.slides_output
         else:
+            safe_user = _safe_filename_part(user)
             if date_from == date_to:
-                output_path = f"daily-report-{user}-{date_from}.pptx"
+                output_path = f"daily-report-{safe_user}-{date_from}.pptx"
             else:
-                output_path = f"daily-report-{user}-{date_from}_{date_to}.pptx"
+                output_path = f"daily-report-{safe_user}-{date_from}_{date_to}.pptx"
 
         format_slides(report, output_path)
         print(f"Slides written to {output_path}", file=sys.stderr)

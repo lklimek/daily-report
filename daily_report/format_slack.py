@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 from daily_report.report_data import (
     ReportData, AuthoredPR, ReviewedPR, WaitingPR,
@@ -87,9 +88,16 @@ def post_to_slack(webhook_url: str, payload: dict, timeout: int = 30) -> None:
         ConnectionError: If the HTTP request fails (network error).
         RuntimeError: If Slack returns a non-ok response.
     """
-    if not webhook_url or not webhook_url.startswith("https://hooks.slack.com/"):
+    if not webhook_url:
+        raise ValueError("Invalid Slack webhook URL: must not be empty.")
+    parsed = urlparse(webhook_url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "hooks.slack.com"
+        or not parsed.path.startswith("/services/")
+    ):
         raise ValueError(
-            f"Invalid Slack webhook URL. Must start with https://hooks.slack.com/"
+            "Invalid Slack webhook URL. Must be https://hooks.slack.com/services/..."
         )
 
     body = json.dumps(payload).encode("utf-8")
@@ -108,7 +116,7 @@ def post_to_slack(webhook_url: str, payload: dict, timeout: int = 30) -> None:
     except urllib.error.HTTPError as e:
         body_text = ""
         try:
-            body_text = e.read().decode("utf-8", errors="replace")
+            body_text = e.read().decode("utf-8", errors="replace")[:500]
         except Exception:
             pass
         raise RuntimeError(

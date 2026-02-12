@@ -1,3 +1,13 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Generated output
+*.pptx
+
+# Config files that may contain secrets
+.env
+
+# IDE
+.vscode/
+.idea/

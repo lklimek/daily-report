@@ -515,6 +515,21 @@ class TestPostToSlack:
         with pytest.raises(RuntimeError, match="unexpected response"):
             post_to_slack(self.VALID_URL, {"blocks": []})
 
+    def test_subdomain_bypass_rejected(self):
+        """URL like hooks.slack.com.evil.com should be rejected."""
+        with pytest.raises(ValueError, match="Invalid Slack webhook URL"):
+            post_to_slack("https://hooks.slack.com.evil.com/services/T/B/X", {"blocks": []})
+
+    def test_missing_services_path_rejected(self):
+        """URL without /services/ path should be rejected."""
+        with pytest.raises(ValueError, match="Invalid Slack webhook URL"):
+            post_to_slack("https://hooks.slack.com/other/path", {"blocks": []})
+
+    def test_http_scheme_rejected(self):
+        """HTTP (not HTTPS) should be rejected."""
+        with pytest.raises(ValueError, match="Invalid Slack webhook URL"):
+            post_to_slack("http://hooks.slack.com/services/T/B/X", {"blocks": []})
+
 
 # ---------------------------------------------------------------------------
 # CLI flag tests
