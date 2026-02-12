@@ -1,0 +1,34 @@
+# Slack App Manifest for daily-report
+#
+# Use this manifest to quickly create a Slack app with Incoming Webhooks
+# enabled. Go to https://api.slack.com/apps and click "Create New App" >
+# "From an app manifest", then paste this YAML.
+#
+# After creating the app:
+#   1. Go to "Incoming Webhooks" and click "Add New Webhook to Workspace"
+#   2. Select the channel where reports should be posted
+#   3. Copy the webhook URL and use it with:
+#        --slack-webhook <URL>
+#        SLACK_WEBHOOK_URL env var
+#        slack_webhook in config YAML
+
+display_information:
+  name: Daily Report
+  description: Posts GitHub PR activity reports to Slack.
+
+features:
+  bot_user:
+    display_name: daily-report
+    always_online: false
+
+oauth_config:
+  scopes:
+    bot:
+      - incoming-webhook
+
+settings:
+  incoming_webhooks:
+    incoming_webhooks_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

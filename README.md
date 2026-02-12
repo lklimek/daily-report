@@ -40,6 +40,15 @@ python -m daily_report --slides --from 2026-01-26 --to 2026-02-06
 
 # Specify a custom output path for the slide deck
 python -m daily_report --slides --slides-output ~/presentations/sprint-review.pptx --from 2026-01-26 --to 2026-02-06
+
+# Post report to Slack
+python -m daily_report --slack --slack-webhook https://hooks.slack.com/services/T.../B.../xxx
+
+# Post to Slack using env var for the webhook URL
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../xxx python -m daily_report --slack
+
+# Post to Slack using webhook URL from config file
+python -m daily_report --slack
 ```
 
 ## Options
@@ -57,6 +66,8 @@ python -m daily_report --slides --slides-output ~/presentations/sprint-review.pp
 | `--no-local` | `false` | Skip local git discovery, use GraphQL-only mode |
 | `--slides` | `false` | Generate `.pptx` slide deck instead of Markdown output |
 | `--slides-output` | *(auto-generated)* | Custom output path for `.pptx` file (requires `--slides`) |
+| `--slack` | `false` | Post report to Slack via Incoming Webhook instead of Markdown output |
+| `--slack-webhook` | *(env var or config)* | Slack webhook URL (requires `--slack`); falls back to `SLACK_WEBHOOK_URL` env var or `slack_webhook` in config file |
 
 `--date` and `--from`/`--to` are mutually exclusive. When neither is provided, defaults to today.
 
@@ -79,6 +90,39 @@ The slide deck contains:
 3. **Summary slide** — aggregate metrics (total PRs, repos, merged count, open count, key themes).
 
 By default, the output file is written to the current directory with the name `daily-report-{user}-{date}.pptx` (or `daily-report-{user}-{from}_{to}.pptx` for date ranges). Use `--slides-output` to specify a custom path.
+
+## Slack Integration
+
+The `--slack` flag posts the report to a Slack channel via an [Incoming Webhook](https://api.slack.com/messaging/webhooks) instead of printing Markdown output. The report is formatted using Slack's Block Kit for a clean, readable layout. No additional dependencies are required (uses Python stdlib only).
+
+`--slack` and `--slides` are mutually exclusive.
+
+### Setting up a Slack Incoming Webhook
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App**.
+2. Choose **From an app manifest** and paste the contents of [`slack-app-manifest.yaml`](slack-app-manifest.yaml) included in this repo.
+3. Click **Create** and install the app to your workspace.
+4. Go to **Incoming Webhooks** and click **Add New Webhook to Workspace**.
+5. Select the channel where reports should be posted and authorize.
+6. Copy the webhook URL (starts with `https://hooks.slack.com/services/...`).
+
+### Providing the webhook URL
+
+The webhook URL is resolved in the following order (first non-empty value wins):
+
+1. **CLI flag**: `--slack-webhook <URL>`
+2. **Environment variable**: `SLACK_WEBHOOK_URL`
+3. **Config file**: `slack_webhook` field in the YAML config
+
+Example config with `slack_webhook`:
+
+```yaml
+default_org: dashpay
+slack_webhook: https://hooks.slack.com/services/T.../B.../xxx
+
+repos:
+  - path: ~/git/platform
+```
 
 ## Configuration
 

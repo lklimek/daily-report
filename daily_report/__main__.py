@@ -11,6 +11,7 @@ Falls back to GraphQL-only mode when no local repos are configured.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, date
@@ -285,6 +286,14 @@ def main():
         "--slides-output", dest="slides_output", default=None,
         help="output path for .pptx file (default: auto-generated name in CWD)",
     )
+    parser.add_argument(
+        "--slack", action="store_true", default=False,
+        help="post report to Slack webhook instead of Markdown output",
+    )
+    parser.add_argument(
+        "--slack-webhook", dest="slack_webhook", default=None,
+        help="Slack webhook URL (default: SLACK_WEBHOOK_URL env var or config file)",
+    )
     args = parser.parse_args()
 
     org = args.org
@@ -326,10 +335,35 @@ def main():
         print("Error: --slides-output requires --slides.", file=sys.stderr)
         sys.exit(1)
 
+    if args.slack and args.slides:
+        print("Error: --slack and --slides are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.slack_webhook and not args.slack:
+        print("Error: --slack-webhook requires --slack.", file=sys.stderr)
+        sys.exit(1)
+
     is_range = date_from != date_to
 
     # Load configuration
     cfg = load_config(args.config_path)
+
+    # Resolve Slack webhook URL (CLI > env var > config file)
+    slack_webhook_url = None
+    if args.slack:
+        slack_webhook_url = (
+            args.slack_webhook
+            or os.environ.get("SLACK_WEBHOOK_URL", "")
+            or cfg.slack_webhook
+        )
+        if not slack_webhook_url:
+            print(
+                "Error: --slack requires a webhook URL. Provide via --slack-webhook, "
+                "SLACK_WEBHOOK_URL env var, or slack_webhook in config file.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     excluded_bots = set(cfg.excluded_bots) if cfg.excluded_bots else set(AI_BOTS)
     git_emails = list(cfg.git_emails) if cfg.git_emails else []
     if args.git_email:
@@ -660,7 +694,16 @@ def main():
     )
 
     # Output
-    if args.slides:
+    if args.slack:
+        from daily_report.format_slack import format_slack, post_to_slack
+        payload = format_slack(report)
+        try:
+            post_to_slack(slack_webhook_url, payload)
+            print("Report posted to Slack.", file=sys.stderr)
+        except (ValueError, ConnectionError, RuntimeError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.slides:
         # Lazy import -- python-pptx is optional
         try:
             from daily_report.format_slides import format_slides

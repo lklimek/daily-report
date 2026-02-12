@@ -17,6 +17,7 @@ Daily GitHub PR report generator. Hybrid local-git + GraphQL architecture (3-pha
   - `report_data.py` — structured data model (`ReportData`, `AuthoredPR`, `ReviewedPR`, `WaitingPR`, `SummaryStats`)
   - `format_markdown.py` — Markdown formatter (pure function, returns string)
   - `format_slides.py` — PPTX slide deck formatter (requires `python-pptx`, writes file)
+  - `format_slack.py` — Slack Block Kit formatter and webhook poster (stdlib only, no extra dependencies)
 - `tests/` — `test_date_range.py` (functional, live GitHub), `test_graphql_client.py` (unit, mocked)
 - `tests/scenarios/` — test case documentation
 - `docs/` — design and research documents
@@ -38,6 +39,7 @@ Three phases: **local git discovery** → **GraphQL review search** → **GraphQ
 - **Mock paths:** use full package prefix, e.g. `daily_report.graphql_client.subprocess.run`
 - **External commands:** via `subprocess.run()` with `capture_output=True`
 - **Data models:** dataclasses (`RepoInfo`, `GitCommit`, `RepoConfig`, `Config`, `ReportData`, `AuthoredPR`, `ReviewedPR`, `WaitingPR`, `SummaryStats`)
+- **Config options:** `slack_webhook` in YAML config (also via `SLACK_WEBHOOK_URL` env var or `--slack-webhook` CLI flag)
 - **Optional dependencies:** use lazy import pattern (import inside conditional block in `__main__.py`, not at module top level) — see `format_slides` for example
 
 ## Known Gotchas

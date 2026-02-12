@@ -52,6 +52,7 @@ class Config:
     git_emails: List[str] = field(default_factory=list)
     excluded_bots: List[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDED_BOTS))
     repos_dir: str = ""
+    slack_webhook: str = ""
 
 
 def parse_remote_url(url: str) -> tuple[str, str]:
@@ -163,6 +164,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
     if repos_dir:
         repos_dir = _expand_path(repos_dir)
 
+    slack_webhook = data.get("slack_webhook", "")
+    if not isinstance(slack_webhook, str):
+        slack_webhook = ""
+
     if not isinstance(git_emails, list):
         git_emails = []
 
@@ -187,4 +192,5 @@ def load_config(config_path: Optional[str] = None) -> Config:
         git_emails=git_emails,
         excluded_bots=excluded_bots,
         repos_dir=repos_dir,
+        slack_webhook=slack_webhook,
     )
