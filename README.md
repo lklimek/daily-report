@@ -1,6 +1,12 @@
-# daily_report
+# daily-report
 
-Daily GitHub PR report generator. Uses local git repos and GitHub GraphQL API to gather authored, contributed, reviewed PRs and pending review requests across a GitHub organization.
+A CLI tool for daily standups. If your team reports progress every day on Slack or a similar tool, this generates a ready-to-post summary of your GitHub activity — no more manual copy-pasting from pull requests.
+
+- **Automatic PR discovery** — finds authored, contributed, and reviewed PRs across all your repos
+- **Post to Slack** *(experimental)* — send a formatted report directly to a Slack channel via webhook
+- **Export to slides** — generate a `.pptx` deck for sprint reviews, one slide per project
+- **Fast hybrid engine** — combines local git history with GitHub GraphQL API for speed
+- **Flexible date ranges** — single day, date range, or default to today
 
 ## Prerequisites
 
