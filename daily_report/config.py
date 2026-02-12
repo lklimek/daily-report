@@ -53,6 +53,8 @@ class Config:
     excluded_bots: List[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDED_BOTS))
     repos_dir: str = ""
     slack_webhook: str = ""
+    consolidate_prompt: str = ""
+    summary_prompt: str = ""
 
 
 def parse_remote_url(url: str) -> tuple[str, str]:
@@ -168,6 +170,14 @@ def load_config(config_path: Optional[str] = None) -> Config:
     if not isinstance(slack_webhook, str):
         slack_webhook = ""
 
+    consolidate_prompt = data.get("consolidate_prompt", "")
+    if not isinstance(consolidate_prompt, str):
+        consolidate_prompt = ""
+
+    summary_prompt = data.get("summary_prompt", "")
+    if not isinstance(summary_prompt, str):
+        summary_prompt = ""
+
     if not isinstance(git_emails, list):
         git_emails = []
 
@@ -193,4 +203,6 @@ def load_config(config_path: Optional[str] = None) -> Config:
         excluded_bots=excluded_bots,
         repos_dir=repos_dir,
         slack_webhook=slack_webhook,
+        consolidate_prompt=consolidate_prompt,
+        summary_prompt=summary_prompt,
     )

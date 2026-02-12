@@ -13,8 +13,12 @@ from pathlib import Path
 import pytest
 from pptx import Presentation
 
+from daily_report.content import prepare_default_content
 from daily_report.report_data import (
     AuthoredPR,
+    ContentBlock,
+    ContentItem,
+    RepoContent,
     ReportData,
     ReviewedPR,
     SummaryStats,
@@ -45,7 +49,9 @@ def _make_report(**kwargs) -> ReportData:
         ),
     )
     defaults.update(kwargs)
-    return ReportData(**defaults)
+    report = ReportData(**defaults)
+    report.content = prepare_default_content(report)
+    return report
 
 
 def _make_full_report() -> ReportData:
@@ -163,19 +169,19 @@ class TestFormatMarkdownSingleDate:
     def test_authored_pr_present(self):
         report = _make_full_report()
         md = format_markdown(report)
-        assert "Add login #10" in md
-        assert "`org/alpha`" in md
+        assert "Add login [#10](https://github.com/org/alpha/pull/10)" in md
+        assert "### `org/alpha`" in md
 
     def test_reviewed_pr_present(self):
         report = _make_full_report()
         md = format_markdown(report)
-        assert "Update docs #11" in md
+        assert "Update docs [#11](https://github.com/org/alpha/pull/11)" in md
         assert "(charlie)" in md
 
     def test_waiting_pr_present(self):
         report = _make_full_report()
         md = format_markdown(report)
-        assert "Refactor DB #21" in md
+        assert "Refactor DB [#21](https://github.com/org/beta/pull/21)" in md
         assert "**dave**" in md
         assert "**eve**" in md
         assert "2 days" in md
@@ -222,20 +228,10 @@ class TestFormatMarkdownDateRange:
 class TestFormatMarkdownEmpty:
     """Empty report with no PRs."""
 
-    def test_no_authored_message(self):
+    def test_no_activity_message(self):
         report = _make_report()
         md = format_markdown(report)
-        assert "No authored or contributed PRs" in md
-
-    def test_no_reviewed_message(self):
-        report = _make_report()
-        md = format_markdown(report)
-        assert "No reviewed or approved PRs" in md
-
-    def test_no_waiting_message(self):
-        report = _make_report()
-        md = format_markdown(report)
-        assert "No PRs waiting for review" in md
+        assert "No PR activity found" in md
 
     def test_themes_default(self):
         report = _make_report()
@@ -271,7 +267,7 @@ class TestFormatMarkdownContributed:
         )
         md = format_markdown(report)
         # No parenthetical author name before the status
-        assert "My PR #88" in md
+        assert "My PR [#88](https://github.com/org/repo/pull/88)" in md
         # There should be no extra parens around the PR title/number
         lines = [l for l in md.splitlines() if "#88" in l]
         assert len(lines) == 1
@@ -338,6 +334,83 @@ class TestFormatMarkdownAdditionsDeletions:
         md = format_markdown(report)
         line = [l for l in md.splitlines() if "#4" in l][0]
         assert "(+0" not in line
+
+
+class TestFormatMarkdownConsolidated:
+    """Consolidated content rendering with multi-number items."""
+
+    def test_consolidated_content_renders(self):
+        report = _make_report()
+        report.content = [
+            RepoContent(
+                repo_name="org/alpha",
+                blocks=[
+                    ContentBlock(
+                        heading="Summary",
+                        items=[
+                            ContentItem(
+                                title="Authentication improvements",
+                                numbers=[10, 11, 12],
+                            ),
+                            ContentItem(
+                                title="Bug fixes",
+                                numbers=[20],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        md = format_markdown(report)
+        assert "### `org/alpha`" in md
+        assert "**Summary**" in md
+        assert "[#10](https://github.com/org/alpha/pull/10)" in md
+        assert "[#11](https://github.com/org/alpha/pull/11)" in md
+        assert "[#12](https://github.com/org/alpha/pull/12)" in md
+        assert "Bug fixes [#20](https://github.com/org/alpha/pull/20)" in md
+
+    def test_consolidated_no_status_or_stats(self):
+        """Consolidated items have no status/additions fields."""
+        report = _make_report()
+        report.content = [
+            RepoContent(
+                repo_name="org/repo",
+                blocks=[
+                    ContentBlock(
+                        heading="Summary",
+                        items=[
+                            ContentItem(title="Summary line", numbers=[1, 2]),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        md = format_markdown(report)
+        line = [l for l in md.splitlines() if "Summary line" in l][0]
+        # No status indicator (em dash + bold status)
+        assert "\u2014 **" not in line
+        # No additions/deletions
+        assert "(+" not in line
+
+
+class TestFormatMarkdownAiSummary:
+    """AI-generated summary replaces default summary stats."""
+
+    def test_ai_summary_replaces_default(self):
+        report = _make_report()
+        report.summary.ai_summary = "Built auth system and fixed critical bugs."
+        report.content = prepare_default_content(report)
+        md = format_markdown(report)
+        assert "**Summary:** Built auth system and fixed critical bugs." in md
+        assert "PRs across" not in md
+        assert "merged today" not in md
+
+    def test_empty_ai_summary_uses_default(self):
+        report = _make_report()
+        report.summary.ai_summary = ""
+        report.content = prepare_default_content(report)
+        md = format_markdown(report)
+        assert "PRs across" in md
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +664,87 @@ class TestFormatSlidesOpenVsMergedStats:
         merged_line = [p.text for p in paragraphs if "MergedPR" in p.text][0]
         assert "+0" not in merged_line
         assert "/-" not in merged_line
+
+
+class TestFormatSlidesConsolidated:
+    """Consolidated content renders on slides correctly."""
+
+    @pytest.fixture(autouse=True)
+    def _generate(self, tmp_path):
+        report = _make_report()
+        report.content = [
+            RepoContent(
+                repo_name="org/alpha",
+                blocks=[
+                    ContentBlock(
+                        heading="Summary",
+                        items=[
+                            ContentItem(
+                                title="Authentication improvements",
+                                numbers=[10, 11, 12],
+                            ),
+                            ContentItem(
+                                title="Bug fixes",
+                                numbers=[20],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        self.output_path = str(tmp_path / "consolidated.pptx")
+        format_slides(report, self.output_path)
+        self.prs = Presentation(self.output_path)
+
+    def test_slide_count(self):
+        # 1 title + 1 repo + 1 summary = 3
+        assert len(self.prs.slides) == 3
+
+    def test_repo_slide_title(self):
+        assert self.prs.slides[1].shapes.title.text == "org/alpha"
+
+    def test_consolidated_item_multi_numbers(self):
+        paragraphs = self.prs.slides[1].placeholders[1].text_frame.paragraphs
+        texts = [p.text for p in paragraphs]
+        multi = [t for t in texts if "Authentication" in t][0]
+        assert "(#10, #11, #12)" in multi
+
+    def test_consolidated_item_single_number(self):
+        paragraphs = self.prs.slides[1].placeholders[1].text_frame.paragraphs
+        texts = [p.text for p in paragraphs]
+        single = [t for t in texts if "Bug fixes" in t][0]
+        assert "#20" in single
+
+    def test_consolidated_item_no_status(self):
+        paragraphs = self.prs.slides[1].placeholders[1].text_frame.paragraphs
+        texts = [p.text for p in paragraphs]
+        item = [t for t in texts if "Authentication" in t][0]
+        assert "-- Open" not in item
+        assert "-- Merged" not in item
+
+
+class TestFormatSlidesAiSummary:
+    """AI summary replaces default summary bullets on summary slide."""
+
+    @pytest.fixture(autouse=True)
+    def _generate(self, tmp_path):
+        report = _make_report()
+        report.summary.ai_summary = "Auth and bug fix work across platform."
+        report.content = prepare_default_content(report)
+        self.output_path = str(tmp_path / "ai_summary.pptx")
+        format_slides(report, self.output_path)
+        self.prs = Presentation(self.output_path)
+
+    def test_summary_slide_shows_ai_text(self):
+        summary_slide = self.prs.slides[-1]
+        text = summary_slide.placeholders[1].text
+        assert "Auth and bug fix work across platform." in text
+
+    def test_summary_slide_no_default_bullets(self):
+        summary_slide = self.prs.slides[-1]
+        text = summary_slide.placeholders[1].text
+        assert "Total PRs:" not in text
+        assert "Repositories:" not in text
 
 
 # ---------------------------------------------------------------------------

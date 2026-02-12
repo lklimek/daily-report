@@ -67,6 +67,11 @@ class TestCLIValidation:
         assert rc != 0
         assert "Invalid date" in output
 
+    def test_model_without_consolidate_or_summary(self):
+        output, rc = run_report("--model", "claude-haiku-4-5-20251001")
+        assert rc != 0
+        assert "--model requires --consolidate or --summary" in output
+
 
 # ---------------------------------------------------------------------------
 # TC01: Single day with known activity (2026-02-09)
@@ -401,3 +406,170 @@ class TestPRCommitInRangeUpdatedAfter:
 
     def test_summary_merged_today(self):
         assert "merged today" in self.output
+
+
+# ---------------------------------------------------------------------------
+# TC08: Consolidation — single day (2026-02-09) with --consolidate
+# Uses claude-haiku-4-5-20251001 (cheapest model)
+# ---------------------------------------------------------------------------
+_CONSOLIDATE_MODEL = "claude-haiku-4-5-20251001"
+
+
+class TestConsolidateSingleDay20260209:
+    """--consolidate on 2026-02-09: verify AI-summarised output."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _output(self, request):
+        request.cls.output = run_report_ok(
+            "--date", "2026-02-09",
+            "--consolidate", "--model", _CONSOLIDATE_MODEL,
+        )
+
+    def test_header_single_date(self):
+        assert "2026-02-09" in self.output
+
+    def test_has_summary_heading(self):
+        """Consolidated output uses 'Summary' block heading."""
+        assert "**Summary**" in self.output
+
+    def test_no_authored_or_reviewed_headings(self):
+        """Consolidated mode replaces per-type headings with Summary."""
+        assert "**Authored" not in self.output
+        assert "**Reviewed" not in self.output
+        assert "**Waiting" not in self.output
+
+    def test_platform_repo_present(self):
+        assert "platform" in self.output
+
+    def test_tenderdash_repo_present(self):
+        assert "tenderdash" in self.output
+
+    def test_pr_numbers_referenced(self):
+        """AI summaries must reference PR numbers."""
+        assert "#3072" in self.output or "#3068" in self.output
+
+    def test_summary_stats_present(self):
+        """Footer summary stats should still be present."""
+        assert "PRs across" in self.output
+        assert "merged today" in self.output
+
+
+class TestConsolidateRange:
+    """--consolidate on a date range: verify AI-summarised output."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _output(self, request):
+        request.cls.output = run_report_ok(
+            "--from", "2026-02-06", "--to", "2026-02-09",
+            "--consolidate", "--model", _CONSOLIDATE_MODEL,
+        )
+
+    def test_header_range(self):
+        assert "2026-02-06 .. 2026-02-09" in self.output
+
+    def test_has_summary_heading(self):
+        assert "**Summary**" in self.output
+
+    def test_multiple_repos(self):
+        assert "platform" in self.output
+        assert "tenderdash" in self.output
+
+    def test_pr_numbers_referenced(self):
+        assert "#" in self.output
+
+    def test_summary_stats_range(self):
+        assert "PRs across" in self.output
+        assert "merged today" not in self.output
+        assert " merged," in self.output
+
+
+class TestConsolidateSlides:
+    """--consolidate --slides: verify PPTX generation works."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _output(self, request, tmp_path_factory):
+        out_path = str(tmp_path_factory.mktemp("slides") / "consolidated.pptx")
+        request.cls.slides_path = out_path
+        request.cls.output = run_report_ok(
+            "--date", "2026-02-09",
+            "--consolidate", "--model", _CONSOLIDATE_MODEL,
+            "--slides", "--slides-output", out_path,
+        )
+
+    def test_file_created(self):
+        from pathlib import Path
+        assert Path(self.slides_path).exists()
+
+    def test_output_message(self):
+        assert "Slides written to" in self.output
+
+
+# ---------------------------------------------------------------------------
+# TC09: --summary flag (AI-generated summary)
+# Uses claude-haiku-4-5-20251001 (cheapest model)
+# ---------------------------------------------------------------------------
+
+class TestSummarySingleDay:
+    """--summary on single day: AI summary replaces default stats."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _output(self, request):
+        request.cls.output = run_report_ok(
+            "--date", "2026-02-09",
+            "--summary", "--model", _CONSOLIDATE_MODEL,
+        )
+
+    def test_header_present(self):
+        assert "2026-02-09" in self.output
+
+    def test_has_summary_label(self):
+        assert "**Summary:**" in self.output
+
+    def test_no_default_stats(self):
+        """AI summary should replace the default stats breakdown."""
+        assert "PRs across" not in self.output
+        assert "merged today" not in self.output
+        assert "Key themes:" not in self.output
+
+    def test_summary_is_short(self):
+        """AI summary should be under 160 chars."""
+        for line in self.output.splitlines():
+            if line.startswith("**Summary:**"):
+                # Strip the "**Summary:** " prefix
+                summary_text = line[len("**Summary:** "):]
+                assert len(summary_text) <= 160
+                assert len(summary_text) > 0
+                break
+        else:
+            pytest.fail("No **Summary:** line found")
+
+
+class TestSummaryWithConsolidate:
+    """--summary combined with --consolidate."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _output(self, request):
+        request.cls.output = run_report_ok(
+            "--date", "2026-02-09",
+            "--consolidate", "--summary", "--model", _CONSOLIDATE_MODEL,
+        )
+
+    def test_has_consolidated_content(self):
+        """Per-repo sections should use Summary heading (consolidated)."""
+        # Count occurrences — repo content headings + footer summary
+        assert "**Summary**" in self.output or "**Summary:**" in self.output
+
+    def test_no_default_stats(self):
+        assert "PRs across" not in self.output
+
+    def test_repos_present(self):
+        assert "platform" in self.output
+
+
+class TestSummaryCliValidation:
+    """CLI validation for --summary and --model."""
+
+    def test_model_without_consolidate_or_summary_errors(self):
+        output, rc = run_report("--model", "claude-haiku-4-5-20251001")
+        assert rc != 0
+        assert "--model requires --consolidate or --summary" in output

@@ -307,6 +307,18 @@ def main():
         "--slack-webhook", dest="slack_webhook", default=None,
         help="Slack webhook URL (default: SLACK_WEBHOOK_URL env var or config file)",
     )
+    parser.add_argument(
+        "--consolidate", action="store_true", default=False,
+        help="consolidate PR lists into AI-generated summaries per repository",
+    )
+    parser.add_argument(
+        "--summary", action="store_true", default=False,
+        help="replace default summary with a short AI-generated summary",
+    )
+    parser.add_argument(
+        "--model", default=None,
+        help="Claude model for --consolidate/--summary (default: claude-sonnet-4-5-20250929)",
+    )
     args = parser.parse_args()
 
     org = args.org
@@ -354,6 +366,10 @@ def main():
 
     if args.slack_webhook and not args.slack:
         print("Error: --slack-webhook requires --slack.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.model and not (args.consolidate or args.summary):
+        print("Error: --model requires --consolidate or --summary.", file=sys.stderr)
         sys.exit(1)
 
     is_range = date_from != date_to
@@ -603,7 +619,7 @@ def main():
         if status not in ("Open", "Draft"):
             additions, deletions = 0, 0
         authored_prs_list.append(AuthoredPR(
-            repo=repo_name,
+            repo=f"{pr_org}/{repo_name}",
             title=title,
             number=pr_number,
             status=status,
@@ -628,7 +644,7 @@ def main():
         pr_author = (detail.get("author") or {}).get("login", "")
         status = format_status(state, is_draft, merged_at)
         reviewed_prs_list.append(ReviewedPR(
-            repo=repo_name,
+            repo=f"{pr_org}/{repo_name}",
             title=title,
             number=pr_number,
             author=pr_author,
@@ -647,8 +663,9 @@ def main():
                 continue
             repo_info = node.get("repository") or {}
             repo_name = repo_info.get("name", "")
+            pr_org = (repo_info.get("owner") or {}).get("login", "")
             pr_number = node.get("number")
-            if not repo_name or not pr_number:
+            if not repo_name or not pr_number or not pr_org:
                 continue
             reviewers = _extract_reviewers(node, user, excluded_bots)
             if reviewers:
@@ -660,7 +677,7 @@ def main():
                 except (ValueError, TypeError):
                     days_waiting = 0
                 waiting_prs_list.append(WaitingPR(
-                    repo=repo_name,
+                    repo=f"{pr_org}/{repo_name}",
                     title=node.get("title", ""),
                     number=pr_number,
                     reviewers=reviewers,
@@ -705,6 +722,42 @@ def main():
             is_range=is_range,
         ),
     )
+
+    # Prepare content (default or consolidated)
+    from daily_report.content import prepare_default_content
+    if args.consolidate:
+        from daily_report.content import prepare_consolidated_content
+        try:
+            report.content = prepare_consolidated_content(
+                report,
+                model=args.model or "claude-sonnet-4-5-20250929",
+                prompt=cfg.consolidate_prompt or None,
+            )
+        except ImportError:
+            print(
+                "Error: anthropic package required for --consolidate. "
+                "Install it with: pip install anthropic",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        except RuntimeError as e:
+            print(f"Error: consolidation failed: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        report.content = prepare_default_content(report)
+
+    # Prepare AI summary (replaces default summary stats)
+    if args.summary:
+        from daily_report.content import prepare_ai_summary
+        try:
+            report.summary.ai_summary = prepare_ai_summary(
+                report,
+                model=args.model or "claude-sonnet-4-5-20250929",
+                prompt=cfg.summary_prompt or None,
+            )
+        except RuntimeError as e:
+            print(f"Error: AI summary failed: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Output
     if args.slack:

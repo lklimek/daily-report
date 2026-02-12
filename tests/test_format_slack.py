@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from daily_report.content import prepare_default_content
 from daily_report.format_slack import (
     _MAX_BLOCKS,
     _TRUNCATION_SUFFIX,
@@ -21,6 +22,9 @@ from daily_report.format_slack import (
 )
 from daily_report.report_data import (
     AuthoredPR,
+    ContentBlock,
+    ContentItem,
+    RepoContent,
     ReportData,
     ReviewedPR,
     SummaryStats,
@@ -49,7 +53,9 @@ def _make_report(**kwargs) -> ReportData:
         ),
     )
     defaults.update(kwargs)
-    return ReportData(**defaults)
+    report = ReportData(**defaults)
+    report.content = prepare_default_content(report)
+    return report
 
 
 def _make_full_report() -> ReportData:
@@ -334,6 +340,27 @@ class TestFormatSlackSummary:
         assert "1 merged today" in summary
         assert "2 still open" in summary
         assert "feat, fix" in summary
+
+
+class TestFormatSlackAiSummary:
+    """AI-generated summary replaces default summary bullets."""
+
+    def test_ai_summary_replaces_default(self):
+        report = _make_full_report()
+        report.summary.ai_summary = "Auth and bug fixes across platform."
+        result = format_slack(report)
+        texts = _all_section_texts(result["blocks"])
+        summary = [t for t in texts if "*Summary*" in t][0]
+        assert "Auth and bug fixes across platform." in summary
+        assert "PRs across" not in summary
+
+    def test_empty_ai_summary_uses_default(self):
+        report = _make_full_report()
+        report.summary.ai_summary = ""
+        result = format_slack(report)
+        texts = _all_section_texts(result["blocks"])
+        summary = [t for t in texts if "*Summary*" in t][0]
+        assert "PRs across" in summary
 
 
 class TestFormatSlackDividers:

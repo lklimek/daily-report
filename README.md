@@ -13,6 +13,8 @@ A CLI tool for daily standups. If your team reports progress every day on Slack 
 - Python 3.8+
 - [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated
 - [PyYAML](https://pypi.org/project/PyYAML/) (`pip install pyyaml`) — required for config file support
+- *(optional)* [python-pptx](https://pypi.org/project/python-pptx/) (`pip install python-pptx`) — for `--slides` export
+- *(optional)* [anthropic](https://pypi.org/project/anthropic/) (`pip install anthropic`) — for `--consolidate` AI summaries
 
 ## Usage
 
@@ -55,6 +57,18 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../xxx python -m daily
 
 # Post to Slack using webhook URL from config file
 python -m daily_report --slack
+
+# Consolidate PR lists into AI-generated summaries (requires: pip install anthropic)
+python -m daily_report --consolidate
+
+# Consolidate with a specific Claude model
+python -m daily_report --consolidate --model claude-sonnet-4-5-20250929
+
+# Consolidate for a date range and export to slides
+python -m daily_report --consolidate --slides --from 2026-01-26 --to 2026-02-06
+
+# Consolidate and post to Slack
+python -m daily_report --consolidate --slack
 ```
 
 ## Options
@@ -74,6 +88,8 @@ python -m daily_report --slack
 | `--slides-output` | *(auto-generated)* | Custom output path for `.pptx` file (requires `--slides`) |
 | `--slack` | `false` | Post report to Slack via Incoming Webhook instead of Markdown output |
 | `--slack-webhook` | *(env var or config)* | Slack webhook URL (requires `--slack`); falls back to `SLACK_WEBHOOK_URL` env var or `slack_webhook` in config file |
+| `--consolidate` | `false` | Consolidate PR lists into AI-generated summaries per repository |
+| `--model` | `claude-sonnet-4-5-20250929` | Claude model for consolidation (requires `--consolidate`) |
 
 `--date` and `--from`/`--to` are mutually exclusive. When neither is provided, defaults to today.
 
@@ -130,6 +146,34 @@ repos:
   - path: ~/git/platform
 ```
 
+## AI Consolidation
+
+The `--consolidate` flag replaces per-PR bullet points with AI-generated summaries that describe the purpose and goals of work per repository. This is useful when activity reports become long — the AI distils multiple PRs into 2-5 concise bullet points per repo, referencing PR numbers.
+
+**Requires** the optional `anthropic` dependency:
+
+```bash
+pip install anthropic
+```
+
+### Authentication
+
+Credentials are resolved in the following order (first match wins):
+
+1. **`ANTHROPIC_API_KEY`** environment variable — standard API key
+2. **`CLAUDE_CODE_OAUTH_TOKEN`** environment variable — OAuth token for CI/CD pipelines (Claude Code subscription)
+3. **`~/.claude/.credentials.json`** — auto-detected from Claude Code login (zero configuration for subscription users who have run `claude login`)
+
+For subscription users with Claude Code already installed, consolidation works out of the box with no extra configuration.
+
+### Custom prompt
+
+Override the default consolidation prompt via the `consolidate_prompt` field in the config file:
+
+```yaml
+consolidate_prompt: "Summarize each repo's work in 3 bullet points focusing on user-facing impact."
+```
+
 ## Configuration
 
 Create `~/.config/daily-report/repos.yaml` to enable local git commit discovery:
@@ -163,11 +207,12 @@ Alternatively, use `--repos-dir ~/git` to auto-discover all repos in a directory
 
 ## How it works
 
-The tool uses a three-phase pipeline:
+The tool uses a four-phase pipeline:
 
 1. **Local git commit discovery** — scans locally cloned repos for commits by the user within the date range, then maps commits to PRs via commit message parsing and GraphQL batch queries. Falls back to GraphQL search for repos not cloned locally.
 2. **Review discovery** — a single GraphQL search finds PRs where the user has review or comment activity, with inline date verification.
 3. **PR enrichment** — a batch GraphQL query fetches details (state, merged date, additions/deletions) for all discovered PRs in one call.
+4. **Content preparation** — groups PRs by repository into renderer-agnostic content blocks. With `--consolidate`, sends PR data to the Claude API for AI-powered summarisation instead of listing individual PRs.
 
 This replaces the previous approach of ~100 individual REST API calls with ~5-7 GraphQL calls, reducing runtime from ~50 seconds to ~7 seconds. Local git discovery also catches PRs that the API search misses (e.g., bot-authored PRs where the user has commits).
 

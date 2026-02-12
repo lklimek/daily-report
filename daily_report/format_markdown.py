@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from daily_report.report_data import ReportData
+from daily_report.report_data import ContentItem, ReportData
 
 
 def format_markdown(report: ReportData) -> str:
     """Render the report as a Markdown string.
 
     Args:
-        report: Complete report data.
+        report: Complete report data with content already prepared.
 
     Returns:
         The full Markdown report as a single string.
@@ -23,57 +23,66 @@ def format_markdown(report: ReportData) -> str:
         lines.append(f"# Daily Report \u2014 {report.date_from}")
     lines.append("")
 
-    # Authored / Contributed PRs
-    lines.append("**Authored / Contributed PRs**")
-    lines.append("")
-    if report.authored_prs:
-        for d in report.authored_prs:
-            stats = ""
-            if d.status in ("Open", "Draft"):
-                stats = f" (+{d.additions}/\u2212{d.deletions})"
-            author_info = ""
-            if d.contributed and d.original_author:
-                author_info = f" ({d.original_author})"
-            lines.append(
-                f"- `{d.repo}` \u2014 {d.title} #{d.number}{author_info} \u2014 **{d.status}**{stats}"
-            )
+    if report.content:
+        for repo in report.content:
+            lines.append(f"### `{repo.repo_name}`")
+            lines.append("")
+            for block in repo.blocks:
+                lines.append(f"**{block.heading}**")
+                lines.append("")
+                for item in block.items:
+                    lines.append(f"- {_render_item(item, repo.repo_name)}")
+                lines.append("")
     else:
-        lines.append("_No authored or contributed PRs._")
-    lines.append("")
-
-    # Reviewed / Approved PRs
-    lines.append("**Reviewed / Approved PRs**")
-    lines.append("")
-    if report.reviewed_prs:
-        for pr in report.reviewed_prs:
-            lines.append(
-                f"- `{pr.repo}` \u2014 {pr.title} #{pr.number} ({pr.author}) \u2014 **{pr.status}**"
-            )
-    else:
-        lines.append("_No reviewed or approved PRs._")
-    lines.append("")
-
-    # Waiting for review
-    lines.append("**Waiting for review**")
-    lines.append("")
-    if report.waiting_prs:
-        for w in report.waiting_prs:
-            reviewer_names = ", ".join(f"**{r}**" for r in w.reviewers)
-            lines.append(
-                f"- `{w.repo}` \u2014 {w.title} #{w.number} \u2014 reviewer: {reviewer_names} \u2014 since {w.created_at} ({w.days_waiting} days)"
-            )
-    else:
-        lines.append("_No PRs waiting for review._")
-    lines.append("")
+        lines.append("_No PR activity found._")
+        lines.append("")
 
     # Summary
     s = report.summary
-    themes_str = ", ".join(s.themes) if s.themes else "general development"
-    merged_label = "merged" if is_range else "merged today"
-    lines.append(
-        f"**Summary:** {s.total_prs} PRs across {s.repo_count} repos, "
-        f"{s.merged_count} {merged_label}, {s.open_count} still open. "
-        f"Key themes: {themes_str}."
-    )
+    if s.ai_summary:
+        lines.append(f"**Summary:** {s.ai_summary}")
+    else:
+        themes_str = ", ".join(s.themes) if s.themes else "general development"
+        merged_label = "merged" if is_range else "merged today"
+        lines.append(
+            f"**Summary:** {s.total_prs} PRs across {s.repo_count} repos, "
+            f"{s.merged_count} {merged_label}, {s.open_count} still open. "
+            f"Key themes: {themes_str}."
+        )
 
     return "\n".join(lines)
+
+
+def _pr_link(repo: str, number: int) -> str:
+    """Build a Markdown link to a GitHub PR."""
+    return f"[#{number}](https://github.com/{repo}/pull/{number})"
+
+
+def _render_item(item: ContentItem, repo: str) -> str:
+    """Render a ContentItem as Markdown text."""
+    text = item.title
+
+    if item.numbers:
+        if len(item.numbers) == 1:
+            text += f" {_pr_link(repo, item.numbers[0])}"
+        else:
+            refs = ", ".join(_pr_link(repo, n) for n in item.numbers)
+            text += f" ({refs})"
+
+    if item.author:
+        text += f" ({item.author})"
+
+    if item.status:
+        text += f" \u2014 **{item.status}**"
+
+    if item.status in ("Open", "Draft") and (item.additions or item.deletions):
+        text += f" (+{item.additions}/\u2212{item.deletions})"
+
+    if item.reviewers:
+        reviewer_str = ", ".join(f"**{r}**" for r in item.reviewers)
+        text += f" \u2014 reviewer: {reviewer_str}"
+
+    if item.days_waiting:
+        text += f" \u2014 {item.days_waiting} days"
+
+    return text

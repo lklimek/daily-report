@@ -49,6 +49,34 @@ class SummaryStats:
     open_count: int
     themes: List[str]        # conventional commit prefixes found
     is_range: bool           # True if date_from != date_to
+    ai_summary: str = ""     # AI-generated summary; replaces default when set
+
+
+@dataclass
+class ContentItem:
+    """A single renderable item with semantic fields. Formatters read fields and render."""
+    title: str
+    numbers: List[int] = field(default_factory=list)
+    status: str = ""
+    additions: int = 0
+    deletions: int = 0
+    author: str = ""
+    reviewers: List[str] = field(default_factory=list)
+    days_waiting: int = 0
+
+
+@dataclass
+class ContentBlock:
+    """A group of items under a heading (e.g. 'Authored / Contributed')."""
+    heading: str
+    items: List[ContentItem] = field(default_factory=list)
+
+
+@dataclass
+class RepoContent:
+    """All content blocks for a single repository."""
+    repo_name: str
+    blocks: List[ContentBlock] = field(default_factory=list)
 
 
 @dataclass
@@ -64,3 +92,4 @@ class ReportData:
         total_prs=0, repo_count=0, merged_count=0, open_count=0,
         themes=[], is_range=False,
     ))
+    content: List[RepoContent] = field(default_factory=list)

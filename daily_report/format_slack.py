@@ -10,9 +10,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-from daily_report.report_data import (
-    ReportData, AuthoredPR, ReviewedPR, WaitingPR,
-)
+from daily_report.report_data import ContentItem, RepoContent, ReportData
 
 
 # Slack limits
@@ -25,7 +23,7 @@ def format_slack(report: ReportData) -> dict:
     """Build a Slack Block Kit payload from the report.
 
     Args:
-        report: Complete report data.
+        report: Complete report data with content already prepared.
 
     Returns:
         A dict suitable for JSON-encoding and posting to a Slack webhook.
@@ -34,8 +32,7 @@ def format_slack(report: ReportData) -> dict:
 
     blocks.extend(_header_blocks(report))
 
-    projects = _group_by_repo(report)
-    if not projects:
+    if not report.content:
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": "No PR activity found for this period."},
@@ -44,18 +41,14 @@ def format_slack(report: ReportData) -> dict:
 
     # Budget: reserve 2 blocks for summary section (section + divider before it)
     budget = _MAX_BLOCKS - len(blocks) - 2
-    sorted_repos = sorted(projects.keys())
     repos_added = 0
 
-    for repo_name in sorted_repos:
-        group = projects[repo_name]
-        repo_blocks = _repo_blocks(
-            repo_name, group["authored"], group["reviewed"], group["waiting"],
-        )
+    for repo in report.content:
+        repo_blocks = _content_blocks(repo)
         # Each repo section also gets a trailing divider
         needed = len(repo_blocks) + 1
         if needed > budget:
-            remaining = len(sorted_repos) - repos_added
+            remaining = len(report.content) - repos_added
             if remaining > 0:
                 blocks.append({
                     "type": "section",
@@ -149,42 +142,20 @@ def _header_blocks(report: ReportData) -> list[dict]:
     ]
 
 
-def _repo_blocks(repo_name: str, authored: list[AuthoredPR],
-                 reviewed: list[ReviewedPR],
-                 waiting: list[WaitingPR]) -> list[dict]:
-    """Build section blocks for a single repository."""
+def _content_blocks(repo: RepoContent) -> list[dict]:
+    """Build section blocks for a single repository's content."""
     blocks: list[dict] = []
 
     # Repo header
     blocks.append({
         "type": "section",
-        "text": {"type": "mrkdwn", "text": f"*`{repo_name}`*"},
+        "text": {"type": "mrkdwn", "text": f"*`{repo.repo_name}`*"},
     })
 
-    if authored:
-        lines = [f"*Authored / Contributed*"]
-        for pr in authored:
-            lines.append(_authored_pr_line(pr))
-        text = _truncate_text("\n".join(lines))
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": text},
-        })
-
-    if reviewed:
-        lines = [f"*Reviewed*"]
-        for pr in reviewed:
-            lines.append(_reviewed_pr_line(pr))
-        text = _truncate_text("\n".join(lines))
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": text},
-        })
-
-    if waiting:
-        lines = [f"*Waiting for Review*"]
-        for pr in waiting:
-            lines.append(_waiting_pr_line(pr))
+    for block in repo.blocks:
+        lines = [f"*{block.heading}*"]
+        for item in block.items:
+            lines.append(_render_item(item))
         text = _truncate_text("\n".join(lines))
         blocks.append({
             "type": "section",
@@ -197,16 +168,19 @@ def _repo_blocks(repo_name: str, authored: list[AuthoredPR],
 def _summary_blocks(report: ReportData) -> list[dict]:
     """Build summary section blocks."""
     s = report.summary
-    themes_str = ", ".join(s.themes) if s.themes else "general development"
-    merged_label = "merged" if s.is_range else "merged today"
 
-    lines = [
-        "*Summary*",
-        f"\u2022 {s.total_prs} PRs across {s.repo_count} repos",
-        f"\u2022 {s.merged_count} {merged_label}",
-        f"\u2022 {s.open_count} still open",
-        f"\u2022 Key themes: {themes_str}",
-    ]
+    if s.ai_summary:
+        lines = ["*Summary*", s.ai_summary]
+    else:
+        themes_str = ", ".join(s.themes) if s.themes else "general development"
+        merged_label = "merged" if s.is_range else "merged today"
+        lines = [
+            "*Summary*",
+            f"\u2022 {s.total_prs} PRs across {s.repo_count} repos",
+            f"\u2022 {s.merged_count} {merged_label}",
+            f"\u2022 {s.open_count} still open",
+            f"\u2022 Key themes: {themes_str}",
+        ]
 
     return [{
         "type": "section",
@@ -214,46 +188,34 @@ def _summary_blocks(report: ReportData) -> list[dict]:
     }]
 
 
-def _group_by_repo(report: ReportData) -> dict[str, dict]:
-    """Group all PR lists by repository name.
+def _render_item(item: ContentItem) -> str:
+    """Render a ContentItem as Slack mrkdwn bullet text."""
+    text = item.title
 
-    Returns:
-        Dict mapping repo name to {"authored": [...], "reviewed": [...], "waiting": [...]}.
-        Only repos with at least one item are included.
-    """
-    projects: dict[str, dict] = {}
-    for pr in report.authored_prs:
-        projects.setdefault(pr.repo, {"authored": [], "reviewed": [], "waiting": []})
-        projects[pr.repo]["authored"].append(pr)
-    for pr in report.reviewed_prs:
-        projects.setdefault(pr.repo, {"authored": [], "reviewed": [], "waiting": []})
-        projects[pr.repo]["reviewed"].append(pr)
-    for pr in report.waiting_prs:
-        projects.setdefault(pr.repo, {"authored": [], "reviewed": [], "waiting": []})
-        projects[pr.repo]["waiting"].append(pr)
-    return projects
+    if item.numbers:
+        if len(item.numbers) == 1:
+            text += f" #{item.numbers[0]}"
+        else:
+            refs = ", ".join(f"#{n}" for n in item.numbers)
+            text += f" ({refs})"
 
+    if item.author:
+        text += f" ({item.author})"
 
-def _authored_pr_line(pr: AuthoredPR) -> str:
-    """Build a Slack mrkdwn bullet line for an authored/contributed PR."""
-    line = f"\u2022 {pr.title} #{pr.number}"
-    if pr.contributed and pr.original_author:
-        line += f" ({pr.original_author})"
-    line += f" \u2014 *{pr.status}*"
-    if pr.status in ("Open", "Draft"):
-        line += f" (+{pr.additions}/-{pr.deletions})"
-    return line
+    if item.status:
+        text += f" \u2014 *{item.status}*"
 
+    if item.status in ("Open", "Draft") and (item.additions or item.deletions):
+        text += f" (+{item.additions}/-{item.deletions})"
 
-def _reviewed_pr_line(pr: ReviewedPR) -> str:
-    """Build a Slack mrkdwn bullet line for a reviewed PR."""
-    return f"\u2022 {pr.title} #{pr.number} ({pr.author}) \u2014 *{pr.status}*"
+    if item.reviewers:
+        reviewer_str = ", ".join(f"*{r}*" for r in item.reviewers)
+        text += f" \u2014 reviewer: {reviewer_str}"
 
+    if item.days_waiting:
+        text += f" \u2014 {item.days_waiting} days"
 
-def _waiting_pr_line(pr: WaitingPR) -> str:
-    """Build a Slack mrkdwn bullet line for a PR waiting for review."""
-    reviewers = ", ".join(f"*{r}*" for r in pr.reviewers)
-    return f"\u2022 {pr.title} #{pr.number} \u2014 reviewer: {reviewers} \u2014 {pr.days_waiting} days"
+    return f"\u2022 {text}"
 
 
 def _truncate_text(text: str, max_len: int = 2900) -> str:
