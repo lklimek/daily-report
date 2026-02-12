@@ -15,7 +15,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from daily_report.config import load_config, Config
 from daily_report.git_local import discover_repos, fetch_repos, find_commits, extract_pr_numbers, RepoInfo
@@ -307,6 +307,10 @@ def main():
         "--slack-webhook", dest="slack_webhook", default=None,
         help="Slack webhook URL (default: SLACK_WEBHOOK_URL env var or config file)",
     )
+    parser.add_argument(
+        "--waiting-days", dest="waiting_days", type=int, default=14,
+        help="Max age in days for 'waiting for review' PRs (default: %(default)s; minimum 1)",
+    )
     args = parser.parse_args()
 
     org = args.org
@@ -343,6 +347,10 @@ def main():
     if date_from > date_to:
         print(f"Error: --from date ({date_from}) must be <= --to date ({date_to}).", file=sys.stderr)
         sys.exit(1)
+
+    # Parsed date objects for reuse
+    date_from_dt = datetime.strptime(date_from, "%Y-%m-%d").date()
+    date_to_dt = datetime.strptime(date_to, "%Y-%m-%d").date()
 
     if args.slides_output and not args.slides:
         print("Error: --slides-output requires --slides.", file=sys.stderr)
@@ -637,8 +645,13 @@ def main():
 
     # Waiting for review
     waiting_prs_list: list[WaitingPR] = []
+    waiting_days = max(1, args.waiting_days if args.waiting_days is not None else 14)
+    waiting_from_dt = date_to_dt - timedelta(days=waiting_days - 1)
+    if waiting_from_dt < date_from_dt:
+        waiting_from_dt = date_from_dt
+    waiting_from = waiting_from_dt.isoformat()
     try:
-        query, variables = build_waiting_for_review_query(org, user)
+        query, variables = build_waiting_for_review_query(org, user, waiting_from, date_to)
         data = graphql_with_retry(query, variables)
         for node in (data.get("search") or {}).get("nodes", []):
             if not node:
@@ -655,8 +668,7 @@ def main():
                 created_at = node.get("createdAt", "")
                 try:
                     created_date = datetime.strptime(created_at[:10], "%Y-%m-%d").date()
-                    ref_date = datetime.strptime(date_to, "%Y-%m-%d").date()
-                    days_waiting = max(0, (ref_date - created_date).days)
+                    days_waiting = max(0, (date_to_dt - created_date).days)
                 except (ValueError, TypeError):
                     days_waiting = 0
                 waiting_prs_list.append(WaitingPR(

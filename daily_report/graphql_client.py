@@ -326,7 +326,7 @@ query ReviewDiscovery($reviewQuery: String!, $commentQuery: String!) {
 
 
 def build_waiting_for_review_query(
-    org: str | None, user: str
+    org: str | None, user: str, created_from: str | None = None, created_to: str | None = None
 ) -> tuple[str, dict]:
     """Build a GraphQL query for open PRs awaiting review.
 
@@ -367,9 +367,12 @@ query WaitingForReview($searchQuery: String!) {
   }
 }"""
     org_filter = f"org:{org} " if org else ""
+    date_clause = ""
+    if created_from and created_to:
+        date_clause = f" created:{created_from}..{created_to}"
     variables = {
         "searchQuery": (
-            f"{org_filter}author:{user} state:open type:pr draft:false"
+            f"{org_filter}author:{user} state:open type:pr draft:false{date_clause}"
         ),
     }
     return query, variables

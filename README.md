@@ -74,6 +74,7 @@ python -m daily_report --slack
 | `--slides-output` | *(auto-generated)* | Custom output path for `.pptx` file (requires `--slides`) |
 | `--slack` | `false` | Post report to Slack via Incoming Webhook instead of Markdown output |
 | `--slack-webhook` | *(env var or config)* | Slack webhook URL (requires `--slack`); falls back to `SLACK_WEBHOOK_URL` env var or `slack_webhook` in config file |
+| `--waiting-days` | `14` | Max age (days) for \"Waiting for review\" PRs (default: 14, minimum: 1) |
 
 `--date` and `--from`/`--to` are mutually exclusive. When neither is provided, defaults to today.
 
@@ -119,6 +120,8 @@ The webhook URL is resolved in the following order (first non-empty value wins):
 1. **CLI flag**: `--slack-webhook <URL>`
 2. **Environment variable**: `SLACK_WEBHOOK_URL`
 3. **Config file**: `slack_webhook` field in the YAML config
+
+Waiting-for-review items are trimmed to PRs created within the last `--waiting-days` (default 14) so very old open PRs are omitted from daily reports.
 
 Example config with `slack_webhook`:
 
