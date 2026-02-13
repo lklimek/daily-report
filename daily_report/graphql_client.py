@@ -362,6 +362,17 @@ query WaitingForReview($searchQuery: String!) {
             }
           }
         }
+        timelineItems(itemTypes: REVIEW_REQUESTED_EVENT, last: 50) {
+          nodes {
+            ... on ReviewRequestedEvent {
+              createdAt
+              requestedReviewer {
+                ... on User { login }
+                ... on Team { name slug }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -385,24 +396,3 @@ def _sanitize_graphql_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
-def _safe_alias(name: str) -> str:
-    """Convert a repo name to a valid GraphQL alias component.
-
-    GraphQL aliases must match /[_A-Za-z][_0-9A-Za-z]*/. Replace
-    hyphens and other invalid characters with underscores.
-    """
-    return name.replace("-", "_").replace(".", "_")
-
-
-def _extract_org_from_url(url: str) -> str:
-    """Extract the organization from a GitHub PR URL.
-
-    Example: https://github.com/dashpay/platform/pull/42 -> dashpay
-    """
-    # URL format: https://github.com/{org}/{repo}/pull/{number}
-    parts = url.split("/")
-    try:
-        github_idx = parts.index("github.com")
-        return parts[github_idx + 1]
-    except (ValueError, IndexError):
-        return ""

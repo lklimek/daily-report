@@ -335,6 +335,12 @@ class TestWaitingForReviewQuery:
         assert "... on User { login }" in query
         assert "... on Team { name slug }" in query
 
+    def test_query_contains_timeline_items(self):
+        query, _ = build_waiting_for_review_query("dashpay", "lklimek")
+        assert "timelineItems" in query
+        assert "REVIEW_REQUESTED_EVENT" in query
+        assert "ReviewRequestedEvent" in query
+
     def test_none_org_omits_org_filter(self):
         query, variables = build_waiting_for_review_query(None, "lklimek")
         assert "WaitingForReview" in query

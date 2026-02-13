@@ -273,6 +273,40 @@ def _extract_reviewers(pr_node, user, excluded_bots):
     return reviewers
 
 
+def _get_reviewer_assigned_date(pr_node, reviewers):
+    """Get the earliest assignment date among pending reviewers.
+
+    Returns the YYYY-MM-DD date string of the earliest reviewer assignment,
+    or falls back to PR createdAt if no timeline data is available.
+    """
+    # Build map: reviewer_login -> latest assignment timestamp
+    assignment_dates: dict[str, str] = {}
+    timeline = (pr_node.get("timelineItems") or {}).get("nodes", [])
+    for event in timeline:
+        if not event:
+            continue
+        reviewer = event.get("requestedReviewer") or {}
+        login = reviewer.get("login") or reviewer.get("slug") or ""
+        created_at = event.get("createdAt", "")
+        if login and created_at:
+            # Keep the latest assignment date per reviewer (re-requests)
+            if login not in assignment_dates or created_at > assignment_dates[login]:
+                assignment_dates[login] = created_at
+
+    # Filter to only pending reviewers
+    pending_dates = [
+        assignment_dates[r] for r in reviewers if r in assignment_dates
+    ]
+
+    if pending_dates:
+        # Return the earliest date (longest wait)
+        earliest = min(pending_dates)
+        return earliest[:10]
+
+    # Fallback to PR createdAt
+    return (pr_node.get("createdAt") or "")[:10]
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -675,11 +709,11 @@ def main():
                 continue
             reviewers = _extract_reviewers(node, user, excluded_bots)
             if reviewers:
-                created_at = node.get("createdAt", "")
+                assigned_date = _get_reviewer_assigned_date(node, reviewers)
                 try:
-                    created_date = datetime.strptime(created_at[:10], "%Y-%m-%d").date()
+                    assigned = datetime.strptime(assigned_date, "%Y-%m-%d").date()
                     ref_date = datetime.strptime(date_to, "%Y-%m-%d").date()
-                    days_waiting = max(0, (ref_date - created_date).days)
+                    days_waiting = max(0, (ref_date - assigned).days)
                 except (ValueError, TypeError):
                     days_waiting = 0
                 waiting_prs_list.append(WaitingPR(
@@ -687,7 +721,7 @@ def main():
                     title=node.get("title", ""),
                     number=pr_number,
                     reviewers=reviewers,
-                    created_at=created_at[:10],
+                    created_at=assigned_date,
                     days_waiting=days_waiting,
                 ))
     except RuntimeError as e:
