@@ -352,7 +352,7 @@ def main():
     )
     parser.add_argument(
         "--model", default=None,
-        help="Claude model for --consolidate/--summary (default: claude-sonnet-4-5-20250929)",
+        help="Claude model for --consolidate/--summary (default: claude-haiku-4-5-20251001)",
     )
     parser.add_argument(
         "--group-by", dest="group_by", default="contribution",
@@ -774,7 +774,7 @@ def main():
         try:
             report.content = prepare_consolidated_content(
                 report,
-                model=args.model or "claude-sonnet-4-5-20250929",
+                model=args.model or "claude-haiku-4-5-20251001",
                 prompt=cfg.consolidate_prompt or None,
             )
         except ImportError:
@@ -797,7 +797,7 @@ def main():
         try:
             report.summary.ai_summary = prepare_ai_summary(
                 report,
-                model=args.model or "claude-sonnet-4-5-20250929",
+                model=args.model or "claude-haiku-4-5-20251001",
                 prompt=cfg.summary_prompt or None,
             )
         except RuntimeError as e:

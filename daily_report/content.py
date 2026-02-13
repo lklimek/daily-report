@@ -276,7 +276,7 @@ def _regroup_by_status(report: ReportData) -> list[RepoContent]:
 
 def prepare_consolidated_content(
     report: ReportData,
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "claude-haiku-4-5-20251001",
     prompt: str | None = None,
 ) -> list[RepoContent]:
     """Build AI-consolidated RepoContent list using the Claude API.
@@ -318,7 +318,7 @@ def prepare_consolidated_content(
 
 def prepare_ai_summary(
     report: ReportData,
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "claude-haiku-4-5-20251001",
     prompt: str | None = None,
 ) -> str:
     """Generate a short AI-powered summary of the report (<160 chars).
