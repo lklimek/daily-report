@@ -11,12 +11,13 @@ from pptx.util import Inches, Pt
 from daily_report.report_data import ContentItem, RepoContent, ReportData
 
 
-def format_slides(report: ReportData, output_path: str) -> None:
+def format_slides(report: ReportData, output_path: str, group_by: str = "project") -> None:
     """Render the report as a PPTX slide deck.
 
     Args:
         report: Complete report data with content already prepared.
         output_path: File path to write the .pptx file.
+        group_by: Grouping mode — "project", "status", or "contribution".
 
     Raises:
         OSError: If the file cannot be written (permissions, missing directory).

@@ -120,6 +120,160 @@ def prepare_default_content(report: ReportData) -> list[RepoContent]:
     return result
 
 
+_STATUS_ORDER = ["Open", "Draft", "Merged", "Closed", "Waiting for Review"]
+
+
+def regroup_content(report: ReportData, group_by: str = "contribution") -> list[RepoContent]:
+    """Regroup content by the specified grouping mode.
+
+    Args:
+        report: Complete report data with populated PR lists.
+        group_by: Grouping mode — "project", "status", or "contribution".
+
+    Returns:
+        List of RepoContent objects organized by the requested grouping.
+    """
+    if group_by == "project":
+        return _regroup_by_project(report)
+    elif group_by == "status":
+        return _regroup_by_status(report)
+    else:
+        return _regroup_by_contribution(report)
+
+
+def _make_authored_item(pr) -> ContentItem:
+    """Create a ContentItem from an AuthoredPR."""
+    return ContentItem(
+        title=pr.title,
+        numbers=[pr.number],
+        status=pr.status,
+        additions=pr.additions,
+        deletions=pr.deletions,
+        author=pr.original_author if pr.contributed else "",
+    )
+
+
+def _make_reviewed_item(pr) -> ContentItem:
+    """Create a ContentItem from a ReviewedPR."""
+    return ContentItem(
+        title=pr.title,
+        numbers=[pr.number],
+        status=pr.status,
+        author=pr.author,
+    )
+
+
+def _make_waiting_item(pr) -> ContentItem:
+    """Create a ContentItem from a WaitingPR."""
+    return ContentItem(
+        title=pr.title,
+        numbers=[pr.number],
+        reviewers=list(pr.reviewers),
+        days_waiting=pr.days_waiting,
+    )
+
+
+def _regroup_by_contribution(report: ReportData) -> list[RepoContent]:
+    """Group by contribution type, then by project within each type."""
+    result: list[RepoContent] = []
+
+    # Authored / Contributed
+    authored_by_repo: dict[str, list[ContentItem]] = defaultdict(list)
+    for pr in report.authored_prs:
+        authored_by_repo[pr.repo].append(_make_authored_item(pr))
+    if authored_by_repo:
+        blocks = [
+            ContentBlock(heading=repo, items=items)
+            for repo, items in sorted(authored_by_repo.items())
+        ]
+        result.append(RepoContent(repo_name="Authored / Contributed", blocks=blocks))
+
+    # Reviewed
+    reviewed_by_repo: dict[str, list[ContentItem]] = defaultdict(list)
+    for pr in report.reviewed_prs:
+        reviewed_by_repo[pr.repo].append(_make_reviewed_item(pr))
+    if reviewed_by_repo:
+        blocks = [
+            ContentBlock(heading=repo, items=items)
+            for repo, items in sorted(reviewed_by_repo.items())
+        ]
+        result.append(RepoContent(repo_name="Reviewed", blocks=blocks))
+
+    # Waiting for Review
+    waiting_by_repo: dict[str, list[ContentItem]] = defaultdict(list)
+    for pr in report.waiting_prs:
+        waiting_by_repo[pr.repo].append(_make_waiting_item(pr))
+    if waiting_by_repo:
+        blocks = [
+            ContentBlock(heading=repo, items=items)
+            for repo, items in sorted(waiting_by_repo.items())
+        ]
+        result.append(RepoContent(repo_name="Waiting for Review", blocks=blocks))
+
+    return result
+
+
+def _regroup_by_project(report: ReportData) -> list[RepoContent]:
+    """Group by project, then by status within each project."""
+    # Collect all PRs by (repo, status)
+    repo_status: dict[str, dict[str, list[ContentItem]]] = defaultdict(lambda: defaultdict(list))
+
+    for pr in report.authored_prs:
+        repo_status[pr.repo][pr.status].append(_make_authored_item(pr))
+
+    for pr in report.reviewed_prs:
+        repo_status[pr.repo][pr.status].append(_make_reviewed_item(pr))
+
+    for pr in report.waiting_prs:
+        repo_status[pr.repo]["Waiting for Review"].append(_make_waiting_item(pr))
+
+    result: list[RepoContent] = []
+    for repo in sorted(repo_status):
+        blocks: list[ContentBlock] = []
+        statuses = repo_status[repo]
+        for status in _STATUS_ORDER:
+            items = statuses.get(status)
+            if items:
+                blocks.append(ContentBlock(heading=status, items=items))
+        if blocks:
+            result.append(RepoContent(repo_name=repo, blocks=blocks))
+
+    return result
+
+
+def _regroup_by_status(report: ReportData) -> list[RepoContent]:
+    """Group by status, then by project within each status."""
+    # Collect all PRs by (status, repo)
+    status_repo: dict[str, dict[str, list[ContentItem]]] = defaultdict(lambda: defaultdict(list))
+
+    for pr in report.authored_prs:
+        item = _make_authored_item(pr)
+        # Clear status on item since the parent group IS the status
+        item.status = ""
+        status_repo[pr.status][pr.repo].append(item)
+
+    for pr in report.reviewed_prs:
+        item = _make_reviewed_item(pr)
+        item.status = ""
+        status_repo[pr.status][pr.repo].append(item)
+
+    for pr in report.waiting_prs:
+        status_repo["Waiting for Review"][pr.repo].append(_make_waiting_item(pr))
+
+    result: list[RepoContent] = []
+    for status in _STATUS_ORDER:
+        repos = status_repo.get(status)
+        if not repos:
+            continue
+        blocks = [
+            ContentBlock(heading=repo, items=items)
+            for repo, items in sorted(repos.items())
+        ]
+        result.append(RepoContent(repo_name=status, blocks=blocks))
+
+    return result
+
+
 def prepare_consolidated_content(
     report: ReportData,
     model: str = "claude-sonnet-4-5-20250929",

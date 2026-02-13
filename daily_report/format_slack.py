@@ -19,11 +19,12 @@ _MAX_TEXT_LENGTH = 3000
 _TRUNCATION_SUFFIX = "\n\u2026 (truncated)"
 
 
-def format_slack(report: ReportData) -> dict:
+def format_slack(report: ReportData, group_by: str = "project") -> dict:
     """Build a Slack Block Kit payload from the report.
 
     Args:
         report: Complete report data with content already prepared.
+        group_by: Grouping mode — "project", "status", or "contribution".
 
     Returns:
         A dict suitable for JSON-encoding and posting to a Slack webhook.
@@ -44,7 +45,7 @@ def format_slack(report: ReportData) -> dict:
     repos_added = 0
 
     for repo in report.content:
-        repo_blocks = _content_blocks(repo)
+        repo_blocks = _content_blocks(repo, group_by)
         # Each repo section also gets a trailing divider
         needed = len(repo_blocks) + 1
         if needed > budget:
@@ -142,21 +143,31 @@ def _header_blocks(report: ReportData) -> list[dict]:
     ]
 
 
-def _content_blocks(repo: RepoContent) -> list[dict]:
+def _content_blocks(repo: RepoContent, group_by: str = "project") -> list[dict]:
     """Build section blocks for a single repository's content."""
     blocks: list[dict] = []
 
-    # Repo header
+    # Repo header — use backticks for project mode (repo names), plain for status/contribution
+    if group_by == "project":
+        header_text = f"*`{repo.repo_name}`*"
+    else:
+        header_text = f"*{repo.repo_name}*"
     blocks.append({
         "type": "section",
-        "text": {"type": "mrkdwn", "text": f"*`{repo.repo_name}`*"},
+        "text": {"type": "mrkdwn", "text": header_text},
     })
 
+    # Build all blocks as a single mrkdwn section with nested bullets
+    content_lines: list[str] = []
     for block in repo.blocks:
-        lines = [f"*{block.heading}*"]
+        if group_by == "project":
+            content_lines.append(f"\u2022 *{block.heading}*")
+        else:
+            content_lines.append(f"\u2022 *`{block.heading}`*")
         for item in block.items:
-            lines.append(_render_item(item))
-        text = _truncate_text("\n".join(lines))
+            content_lines.append(f"    {_render_item(item)}")
+    if content_lines:
+        text = _truncate_text("\n".join(content_lines))
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": text},

@@ -170,7 +170,7 @@ class TestFormatMarkdownSingleDate:
         report = _make_full_report()
         md = format_markdown(report)
         assert "Add login [#10](https://github.com/org/alpha/pull/10)" in md
-        assert "### `org/alpha`" in md
+        assert "## `org/alpha`" in md
 
     def test_reviewed_pr_present(self):
         report = _make_full_report()
@@ -362,8 +362,8 @@ class TestFormatMarkdownConsolidated:
             ),
         ]
         md = format_markdown(report)
-        assert "### `org/alpha`" in md
-        assert "**Summary**" in md
+        assert "## `org/alpha`" in md
+        assert "- **Summary**" in md
         assert "[#10](https://github.com/org/alpha/pull/10)" in md
         assert "[#11](https://github.com/org/alpha/pull/11)" in md
         assert "[#12](https://github.com/org/alpha/pull/12)" in md

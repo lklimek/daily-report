@@ -5,11 +5,12 @@ from __future__ import annotations
 from daily_report.report_data import ContentItem, ReportData
 
 
-def format_markdown(report: ReportData) -> str:
+def format_markdown(report: ReportData, group_by: str = "project") -> str:
     """Render the report as a Markdown string.
 
     Args:
         report: Complete report data with content already prepared.
+        group_by: Grouping mode — "project", "status", or "contribution".
 
     Returns:
         The full Markdown report as a single string.
@@ -25,14 +26,27 @@ def format_markdown(report: ReportData) -> str:
 
     if report.content:
         for repo in report.content:
-            lines.append(f"### `{repo.repo_name}`")
+            # Section header (H2)
+            if group_by == "project":
+                lines.append(f"## `{repo.repo_name}`")
+            else:
+                lines.append(f"## {repo.repo_name}")
             lines.append("")
             for block in repo.blocks:
-                lines.append(f"**{block.heading}**")
-                lines.append("")
+                # Block heading as L1 bullet
+                if group_by == "project":
+                    lines.append(f"- **{block.heading}**")
+                else:
+                    lines.append(f"- **`{block.heading}`**")
+                # Determine repo name for PR links
+                if group_by == "project":
+                    link_repo = repo.repo_name
+                else:
+                    link_repo = block.heading
+                # Items as indented L2 bullets
                 for item in block.items:
-                    lines.append(f"- {_render_item(item, repo.repo_name)}")
-                lines.append("")
+                    lines.append(f"  - {_render_item(item, link_repo)}")
+            lines.append("")
     else:
         lines.append("_No PR activity found._")
         lines.append("")

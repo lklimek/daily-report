@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Daily GitHub PR report generator using hybrid local-git + GraphQL approach.
 
-Three-phase pipeline:
+Four-phase pipeline:
   Phase 1: Commit discovery via local git repos + GraphQL API fallback
   Phase 2: Review discovery via GraphQL search
   Phase 3: PR detail enrichment via GraphQL batch queries
+  Phase 4: Content preparation (default grouping or AI consolidation)
 
 Falls back to GraphQL-only mode when no local repos are configured.
 """
@@ -318,6 +319,11 @@ def main():
     parser.add_argument(
         "--model", default=None,
         help="Claude model for --consolidate/--summary (default: claude-sonnet-4-5-20250929)",
+    )
+    parser.add_argument(
+        "--group-by", dest="group_by", default="contribution",
+        choices=["project", "status", "contribution"],
+        help="group report by: project, status, or contribution type (default: contribution)",
     )
     args = parser.parse_args()
 
@@ -724,8 +730,12 @@ def main():
     )
 
     # Prepare content (default or consolidated)
-    from daily_report.content import prepare_default_content
     if args.consolidate:
+        if args.group_by != "contribution":
+            print(
+                "Warning: --group-by is ignored when --consolidate is used.",
+                file=sys.stderr,
+            )
         from daily_report.content import prepare_consolidated_content
         try:
             report.content = prepare_consolidated_content(
@@ -744,7 +754,8 @@ def main():
             print(f"Error: consolidation failed: {e}", file=sys.stderr)
             sys.exit(1)
     else:
-        report.content = prepare_default_content(report)
+        from daily_report.content import regroup_content
+        report.content = regroup_content(report, args.group_by)
 
     # Prepare AI summary (replaces default summary stats)
     if args.summary:
@@ -762,7 +773,7 @@ def main():
     # Output
     if args.slack:
         from daily_report.format_slack import format_slack, post_to_slack
-        payload = format_slack(report)
+        payload = format_slack(report, group_by=args.group_by)
         try:
             post_to_slack(slack_webhook_url, payload)
             print("Report posted to Slack.", file=sys.stderr)
@@ -790,10 +801,10 @@ def main():
             else:
                 output_path = f"daily-report-{safe_user}-{date_from}_{date_to}.pptx"
 
-        format_slides(report, output_path)
+        format_slides(report, output_path, group_by=args.group_by)
         print(f"Slides written to {output_path}", file=sys.stderr)
     else:
-        output = format_markdown(report)
+        output = format_markdown(report, group_by=args.group_by)
         print(output)
 
 
