@@ -658,6 +658,12 @@ def main():
         status = format_status(state, is_draft, merged_at)
         if status not in ("Open", "Draft"):
             additions, deletions = 0, 0
+        body = (detail.get("body") or "")[:2000]
+        changed_files = [
+            n.get("path", "") for n in
+            (detail.get("files") or {}).get("nodes", [])
+            if n and n.get("path")
+        ]
         authored_prs_list.append(AuthoredPR(
             repo=f"{pr_org}/{repo_name}",
             title=title,
@@ -667,6 +673,8 @@ def main():
             deletions=deletions,
             contributed=(role == "contributed"),
             original_author=pr_author if role == "contributed" else None,
+            body=body,
+            changed_files=changed_files,
         ))
 
     # Sort for deterministic output
@@ -683,12 +691,20 @@ def main():
         merged_at = detail.get("mergedAt")
         pr_author = (detail.get("author") or {}).get("login", "")
         status = format_status(state, is_draft, merged_at)
+        body = (detail.get("body") or "")[:2000]
+        changed_files = [
+            n.get("path", "") for n in
+            (detail.get("files") or {}).get("nodes", [])
+            if n and n.get("path")
+        ]
         reviewed_prs_list.append(ReviewedPR(
             repo=f"{pr_org}/{repo_name}",
             title=title,
             number=pr_number,
             author=pr_author,
             status=status,
+            body=body,
+            changed_files=changed_files,
         ))
 
     # Waiting for review

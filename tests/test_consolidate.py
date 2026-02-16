@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from daily_report.content import (
+    _build_repos_data,
     _parse_response,
     prepare_ai_summary,
     prepare_consolidated_content,
@@ -564,3 +565,92 @@ class TestPrepareAiSummary:
         # Verify the CLI received our custom prompt in stdin
         stdin_text = mock_run.call_args.kwargs.get("input", "")
         assert "Custom prompt here" in stdin_text
+
+
+# ---------------------------------------------------------------------------
+# _build_repos_data tests
+# ---------------------------------------------------------------------------
+
+class TestBuildReposData:
+    """Tests for _build_repos_data: data sent to AI prompt."""
+
+    def test_authored_pr_includes_body_and_files(self):
+        report = _make_report(
+            authored_prs=[
+                AuthoredPR(
+                    repo="org/repo", title="Add login", number=10,
+                    status="Open", additions=50, deletions=10,
+                    contributed=False, original_author=None,
+                    body="Implements OAuth login flow",
+                    changed_files=["src/auth.py", "tests/test_auth.py"],
+                ),
+            ],
+        )
+        data = _build_repos_data(report)
+        pr = data["org/repo"][0]
+        assert pr["body"] == "Implements OAuth login flow"
+        assert pr["changed_files"] == ["src/auth.py", "tests/test_auth.py"]
+        assert pr["additions"] == 50
+        assert pr["deletions"] == 10
+
+    def test_reviewed_pr_includes_body_and_files(self):
+        report = _make_report(
+            reviewed_prs=[
+                ReviewedPR(
+                    repo="org/repo", title="Fix bug", number=20,
+                    author="alice", status="Merged",
+                    body="Fixes null pointer in parser",
+                    changed_files=["src/parser.py"],
+                ),
+            ],
+        )
+        data = _build_repos_data(report)
+        pr = data["org/repo"][0]
+        assert pr["body"] == "Fixes null pointer in parser"
+        assert pr["changed_files"] == ["src/parser.py"]
+
+    def test_empty_body_omitted(self):
+        report = _make_report(
+            authored_prs=[
+                AuthoredPR(
+                    repo="org/repo", title="Minor fix", number=5,
+                    status="Open", additions=1, deletions=0,
+                    contributed=False, original_author=None,
+                ),
+            ],
+        )
+        data = _build_repos_data(report)
+        pr = data["org/repo"][0]
+        assert "body" not in pr
+
+    def test_empty_changed_files_omitted(self):
+        report = _make_report(
+            authored_prs=[
+                AuthoredPR(
+                    repo="org/repo", title="Minor fix", number=5,
+                    status="Open", additions=1, deletions=0,
+                    contributed=False, original_author=None,
+                ),
+            ],
+        )
+        data = _build_repos_data(report)
+        pr = data["org/repo"][0]
+        assert "changed_files" not in pr
+
+    def test_waiting_pr_unchanged(self):
+        report = _make_report(
+            waiting_prs=[
+                WaitingPR(
+                    repo="org/repo", title="Waiting", number=3,
+                    reviewers=["alice"], created_at="2026-02-08",
+                    days_waiting=2,
+                ),
+            ],
+        )
+        data = _build_repos_data(report)
+        pr = data["org/repo"][0]
+        assert pr == {
+            "number": 3,
+            "title": "Waiting",
+            "type": "waiting_for_review",
+        }

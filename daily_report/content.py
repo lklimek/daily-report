@@ -29,7 +29,11 @@ from daily_report.report_data import (
 )
 
 _DEFAULT_SUMMARY_PROMPT = (
-    "You are given a list of GitHub pull requests grouped by repository. "
+    "You are given a list of GitHub pull requests grouped by repository, "
+    "including PR descriptions, changed files, and diff stats. "
+    "Use all provided details to understand the substance of each PR. "
+    "If a PR description or changed-files list is missing or unclear, use the "
+    "repo name, PR title, and file paths to infer what the change does. "
     "Write a single-sentence summary of the overall work (max 320 characters). "
     "Focus on the high-level goals, motivations, and value delivered — not what "
     "was changed, but WHY it matters and what problems were solved. "
@@ -37,13 +41,16 @@ _DEFAULT_SUMMARY_PROMPT = (
 )
 
 _DEFAULT_PROMPT = (
-    "You are given a list of GitHub pull requests grouped by repository. "
+    "You are given a list of GitHub pull requests grouped by repository, "
+    "including PR descriptions, changed files, and diff stats. "
+    "Use all provided details — descriptions, file paths, and diff sizes — to "
+    "understand the substance and scope of each PR. "
+    "If a PR description is missing or vague, infer intent from the file paths, "
+    "diff stats, and PR title. "
     "For each repository, summarize the work into 2-5 concise bullet points. "
-    "Do NOT just describe what was done — instead, dig into the details of each PR: "
-    "examine the PR titles, infer the underlying commits and changes, and explain "
-    "the GOALS, MOTIVATIONS, and VALUE of each piece of work. "
-    "Ask yourself: why was this PR needed? What problem does it solve? What value "
-    "does it deliver to users, developers, or the system? "
+    "Do NOT just repeat PR titles — explain the GOALS, MOTIVATIONS, and VALUE "
+    "of each piece of work. Why was this PR needed? What problem does it solve? "
+    "What value does it deliver to users, developers, or the system? "
     "Reference PR numbers. Return valid JSON only, no markdown fences. "
     'Format: {"repo_name": [{"title": "summary line", "numbers": [1,2,3]}, ...], ...}'
 )
@@ -468,20 +475,32 @@ def _build_repos_data(report: ReportData) -> dict[str, list[dict]]:
     repos: dict[str, list[dict]] = defaultdict(list)
 
     for pr in report.authored_prs:
-        repos[pr.repo].append({
+        entry: dict = {
             "number": pr.number,
             "title": pr.title,
             "status": pr.status,
             "type": "contributed" if pr.contributed else "authored",
-        })
+            "additions": pr.additions,
+            "deletions": pr.deletions,
+        }
+        if pr.body:
+            entry["body"] = pr.body
+        if pr.changed_files:
+            entry["changed_files"] = pr.changed_files
+        repos[pr.repo].append(entry)
 
     for pr in report.reviewed_prs:
-        repos[pr.repo].append({
+        entry = {
             "number": pr.number,
             "title": pr.title,
             "status": pr.status,
             "type": "reviewed",
-        })
+        }
+        if pr.body:
+            entry["body"] = pr.body
+        if pr.changed_files:
+            entry["changed_files"] = pr.changed_files
+        repos[pr.repo].append(entry)
 
     for pr in report.waiting_prs:
         repos[pr.repo].append({
