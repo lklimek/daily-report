@@ -31,15 +31,20 @@ from daily_report.report_data import (
 _DEFAULT_SUMMARY_PROMPT = (
     "You are given a list of GitHub pull requests grouped by repository. "
     "Write a single-sentence summary of the overall work (max 320 characters). "
-    "Focus on the high-level goals and themes, not individual PRs. "
+    "Focus on the high-level goals, motivations, and value delivered — not what "
+    "was changed, but WHY it matters and what problems were solved. "
     "Return ONLY the summary text, nothing else — no quotes, no labels, no JSON."
 )
 
 _DEFAULT_PROMPT = (
     "You are given a list of GitHub pull requests grouped by repository. "
-    "For each repository, summarize the work into 2-5 concise bullet points "
-    "describing the PURPOSE and GOALS of the work. Reference PR numbers. "
-    "Return valid JSON only, no markdown fences. "
+    "For each repository, summarize the work into 2-5 concise bullet points. "
+    "Do NOT just describe what was done — instead, dig into the details of each PR: "
+    "examine the PR titles, infer the underlying commits and changes, and explain "
+    "the GOALS, MOTIVATIONS, and VALUE of each piece of work. "
+    "Ask yourself: why was this PR needed? What problem does it solve? What value "
+    "does it deliver to users, developers, or the system? "
+    "Reference PR numbers. Return valid JSON only, no markdown fences. "
     'Format: {"repo_name": [{"title": "summary line", "numbers": [1,2,3]}, ...], ...}'
 )
 
