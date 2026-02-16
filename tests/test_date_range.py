@@ -415,6 +415,7 @@ class TestPRCommitInRangeUpdatedAfter:
 _CONSOLIDATE_MODEL = "claude-haiku-4-5-20251001"
 
 
+@pytest.mark.requires_ai
 class TestConsolidateSingleDay20260209:
     """--consolidate on 2026-02-09: verify AI-summarised output."""
 
@@ -454,6 +455,7 @@ class TestConsolidateSingleDay20260209:
         assert "merged today" in self.output
 
 
+@pytest.mark.requires_ai
 class TestConsolidateRange:
     """--consolidate on a date range: verify AI-summarised output."""
 
@@ -483,6 +485,7 @@ class TestConsolidateRange:
         assert " merged," in self.output
 
 
+@pytest.mark.requires_ai
 class TestConsolidateSlides:
     """--consolidate --slides: verify PPTX generation works."""
 
@@ -509,6 +512,7 @@ class TestConsolidateSlides:
 # Uses claude-haiku-4-5-20251001 (cheapest model)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.requires_ai
 class TestSummarySingleDay:
     """--summary on single day: AI summary replaces default stats."""
 
@@ -544,6 +548,7 @@ class TestSummarySingleDay:
             pytest.fail("No **Summary:** line found")
 
 
+@pytest.mark.requires_ai
 class TestSummaryWithConsolidate:
     """--summary combined with --consolidate."""
 
