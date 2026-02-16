@@ -536,13 +536,14 @@ class TestPrepareAiSummary:
 
     @patch.dict("os.environ", {}, clear=False)
     @patch("daily_report.content.subprocess.run")
-    def test_truncates_to_160_chars(self, mock_run, monkeypatch):
+    def test_no_hard_truncation(self, mock_run, monkeypatch):
+        """AI output is returned as-is (prompt controls length, no hard cut)."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         mock_run.return_value = MagicMock(
             returncode=0, stdout="x" * 300, stderr="",
         )
         result = prepare_ai_summary(self._report_with_prs())
-        assert len(result) == 160
+        assert len(result) == 300
 
     def test_empty_report_returns_empty_string(self):
         result = prepare_ai_summary(_make_report())

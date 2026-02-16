@@ -532,12 +532,12 @@ class TestSummarySingleDay:
         assert "Key themes:" not in self.output
 
     def test_summary_is_short(self):
-        """AI summary should be under 160 chars."""
+        """AI summary should be under 320 chars."""
         for line in self.output.splitlines():
             if line.startswith("**Summary:**"):
                 # Strip the "**Summary:** " prefix
                 summary_text = line[len("**Summary:** "):]
-                assert len(summary_text) <= 160
+                assert len(summary_text) <= 320
                 assert len(summary_text) > 0
                 break
         else:

@@ -5,7 +5,7 @@ renderer-agnostic RepoContent structures. Supports two modes:
 
 - prepare_default_content(): groups PRs by repo with semantic ContentItems
 - prepare_consolidated_content(): AI-powered summarisation via Claude API
-- prepare_ai_summary(): AI-powered one-line summary (<160 chars)
+- prepare_ai_summary(): AI-powered one-line summary (<320 chars)
 
 Authentication for consolidation (resolution order):
 1. ANTHROPIC_API_KEY env var  → uses anthropic Python SDK directly
@@ -30,7 +30,7 @@ from daily_report.report_data import (
 
 _DEFAULT_SUMMARY_PROMPT = (
     "You are given a list of GitHub pull requests grouped by repository. "
-    "Write a single-sentence summary of the overall work (max 160 characters). "
+    "Write a single-sentence summary of the overall work (max 320 characters). "
     "Focus on the high-level goals and themes, not individual PRs. "
     "Return ONLY the summary text, nothing else — no quotes, no labels, no JSON."
 )
@@ -321,7 +321,7 @@ def prepare_ai_summary(
     model: str = "claude-haiku-4-5-20251001",
     prompt: str | None = None,
 ) -> str:
-    """Generate a short AI-powered summary of the report (<160 chars).
+    """Generate a short AI-powered summary of the report (<320 chars).
 
     Uses the same dual-backend as consolidation (SDK or CLI).
 
@@ -331,7 +331,7 @@ def prepare_ai_summary(
         prompt: Custom system prompt. Uses default if None.
 
     Returns:
-        Summary string, truncated to 160 characters.
+        Summary string (AI is prompted to stay under 320 characters).
 
     Raises:
         RuntimeError: If the API call fails.
@@ -349,7 +349,7 @@ def prepare_ai_summary(
     else:
         text = _call_via_cli(model, system_prompt, user_message)
 
-    return text.strip()[:160]
+    return text.strip()
 
 
 def _call_via_sdk(
