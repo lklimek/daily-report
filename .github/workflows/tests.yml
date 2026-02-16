@@ -29,10 +29,6 @@ jobs:
         if: env.HAS_CLAUDE_TOKEN == 'true'
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Warn if AI tests will be skipped
-        if: env.HAS_CLAUDE_TOKEN != 'true'
-        run: echo "::warning::CLAUDE_CODE_OAUTH_TOKEN is not set — tests requiring AI will be skipped"
-
       - name: Run tests
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
