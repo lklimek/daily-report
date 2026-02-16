@@ -69,6 +69,15 @@ python -m daily_report --consolidate --slides --from 2026-01-26 --to 2026-02-06
 
 # Consolidate and post to Slack
 python -m daily_report --consolidate --slack
+
+# Replace default summary stats with a short AI-generated summary
+python -m daily_report --summary
+
+# Combine consolidation and AI summary
+python -m daily_report --consolidate --summary
+
+# AI features with a specific model
+python -m daily_report --consolidate --summary --model claude-haiku-4-5-20251001
 ```
 
 ## Options
@@ -89,7 +98,8 @@ python -m daily_report --consolidate --slack
 | `--slack` | `false` | Post report to Slack via Incoming Webhook instead of Markdown output |
 | `--slack-webhook` | *(env var or config)* | Slack webhook URL (requires `--slack`); falls back to `SLACK_WEBHOOK_URL` env var or `slack_webhook` in config file |
 | `--consolidate` | `false` | Consolidate PR lists into AI-generated summaries per repository |
-| `--model` | `claude-sonnet-4-5-20250929` | Claude model for consolidation (requires `--consolidate`) |
+| `--summary` | `false` | Replace default summary stats with a short AI-generated summary (<160 chars) |
+| `--model` | `claude-sonnet-4-5-20250929` | Claude model for AI features (requires `--consolidate` or `--summary`) |
 
 `--date` and `--from`/`--to` are mutually exclusive. When neither is provided, defaults to today.
 
@@ -146,11 +156,19 @@ repos:
   - path: ~/git/platform
 ```
 
-## AI Consolidation
+## AI Features
 
-The `--consolidate` flag replaces per-PR bullet points with AI-generated summaries that describe the purpose and goals of work per repository. This is useful when activity reports become long — the AI distils multiple PRs into 2-5 concise bullet points per repo, referencing PR numbers.
+### Consolidation (`--consolidate`)
 
-**Requires** the optional `anthropic` dependency:
+Replaces per-PR bullet points with AI-generated summaries that describe the purpose and goals of work per repository. Useful when activity reports become long — the AI distils multiple PRs into 2-5 concise bullet points per repo, referencing PR numbers.
+
+### Summary (`--summary`)
+
+Replaces the default summary stats (PR counts, repo counts, themes) with a single AI-generated sentence (<160 characters) describing the overall work.
+
+Both flags can be combined. Both work with all output formats (Markdown, Slides, Slack).
+
+**Requires** the optional `anthropic` dependency (only when using `ANTHROPIC_API_KEY`; not needed when falling back to the `claude` CLI):
 
 ```bash
 pip install anthropic
@@ -158,20 +176,20 @@ pip install anthropic
 
 ### Authentication
 
-Credentials are resolved in the following order (first match wins):
+Two backends are supported:
 
-1. **`ANTHROPIC_API_KEY`** environment variable — standard API key
-2. **`CLAUDE_CODE_OAUTH_TOKEN`** environment variable — OAuth token for CI/CD pipelines (Claude Code subscription)
-3. **`~/.claude/.credentials.json`** — auto-detected from Claude Code login (zero configuration for subscription users who have run `claude login`)
+1. **`ANTHROPIC_API_KEY`** environment variable — uses the `anthropic` Python SDK directly
+2. **Claude CLI** (`claude`) — if no API key is set, falls back to the `claude` CLI which handles authentication natively (subscription, OAuth token, etc.)
 
-For subscription users with Claude Code already installed, consolidation works out of the box with no extra configuration.
+For subscription users with Claude Code already installed, AI features work out of the box with no extra configuration.
 
-### Custom prompt
+### Custom prompts
 
-Override the default consolidation prompt via the `consolidate_prompt` field in the config file:
+Override the default prompts via the config file:
 
 ```yaml
 consolidate_prompt: "Summarize each repo's work in 3 bullet points focusing on user-facing impact."
+summary_prompt: "Write a one-sentence summary of all work done."
 ```
 
 ## Configuration
