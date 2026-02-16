@@ -361,8 +361,22 @@ def main():
     )
     args = parser.parse_args()
 
-    org = args.org
-    user = args.user or get_current_user()
+    # Validate flag combinations before any network calls (e.g. get_current_user)
+    if args.slides_output and not args.slides:
+        print("Error: --slides-output requires --slides.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.slack and args.slides:
+        print("Error: --slack and --slides are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.slack_webhook and not args.slack:
+        print("Error: --slack-webhook requires --slack.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.model and not (args.consolidate or args.summary):
+        print("Error: --model requires --consolidate or --summary.", file=sys.stderr)
+        sys.exit(1)
 
     # Validate date arguments
     if args.date and (args.date_from or args.date_to):
@@ -396,21 +410,8 @@ def main():
         print(f"Error: --from date ({date_from}) must be <= --to date ({date_to}).", file=sys.stderr)
         sys.exit(1)
 
-    if args.slides_output and not args.slides:
-        print("Error: --slides-output requires --slides.", file=sys.stderr)
-        sys.exit(1)
-
-    if args.slack and args.slides:
-        print("Error: --slack and --slides are mutually exclusive.", file=sys.stderr)
-        sys.exit(1)
-
-    if args.slack_webhook and not args.slack:
-        print("Error: --slack-webhook requires --slack.", file=sys.stderr)
-        sys.exit(1)
-
-    if args.model and not (args.consolidate or args.summary):
-        print("Error: --model requires --consolidate or --summary.", file=sys.stderr)
-        sys.exit(1)
+    org = args.org
+    user = args.user or get_current_user()
 
     is_range = date_from != date_to
 
@@ -658,6 +659,12 @@ def main():
         status = format_status(state, is_draft, merged_at)
         if status not in ("Open", "Draft"):
             additions, deletions = 0, 0
+        body = (detail.get("body") or "")[:2000]
+        changed_files = [
+            n.get("path", "") for n in
+            (detail.get("files") or {}).get("nodes", [])
+            if n and n.get("path")
+        ]
         authored_prs_list.append(AuthoredPR(
             repo=f"{pr_org}/{repo_name}",
             title=title,
@@ -667,6 +674,8 @@ def main():
             deletions=deletions,
             contributed=(role == "contributed"),
             original_author=pr_author if role == "contributed" else None,
+            body=body,
+            changed_files=changed_files,
         ))
 
     # Sort for deterministic output
@@ -683,12 +692,20 @@ def main():
         merged_at = detail.get("mergedAt")
         pr_author = (detail.get("author") or {}).get("login", "")
         status = format_status(state, is_draft, merged_at)
+        body = (detail.get("body") or "")[:2000]
+        changed_files = [
+            n.get("path", "") for n in
+            (detail.get("files") or {}).get("nodes", [])
+            if n and n.get("path")
+        ]
         reviewed_prs_list.append(ReviewedPR(
             repo=f"{pr_org}/{repo_name}",
             title=title,
             number=pr_number,
             author=pr_author,
             status=status,
+            body=body,
+            changed_files=changed_files,
         ))
 
     # Waiting for review

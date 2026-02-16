@@ -122,7 +122,9 @@ _PR_DETAIL_FIELDS = """\
       additions
       deletions
       author { login }
-      url"""
+      url
+      body
+      files(first: 50) { nodes { path } }"""
 
 
 def build_pr_details_query(prs: list[tuple[str, str, int]]) -> str:
