@@ -361,8 +361,22 @@ def main():
     )
     args = parser.parse_args()
 
-    org = args.org
-    user = args.user or get_current_user()
+    # Validate flag combinations before any network calls (e.g. get_current_user)
+    if args.slides_output and not args.slides:
+        print("Error: --slides-output requires --slides.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.slack and args.slides:
+        print("Error: --slack and --slides are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.slack_webhook and not args.slack:
+        print("Error: --slack-webhook requires --slack.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.model and not (args.consolidate or args.summary):
+        print("Error: --model requires --consolidate or --summary.", file=sys.stderr)
+        sys.exit(1)
 
     # Validate date arguments
     if args.date and (args.date_from or args.date_to):
@@ -396,21 +410,8 @@ def main():
         print(f"Error: --from date ({date_from}) must be <= --to date ({date_to}).", file=sys.stderr)
         sys.exit(1)
 
-    if args.slides_output and not args.slides:
-        print("Error: --slides-output requires --slides.", file=sys.stderr)
-        sys.exit(1)
-
-    if args.slack and args.slides:
-        print("Error: --slack and --slides are mutually exclusive.", file=sys.stderr)
-        sys.exit(1)
-
-    if args.slack_webhook and not args.slack:
-        print("Error: --slack-webhook requires --slack.", file=sys.stderr)
-        sys.exit(1)
-
-    if args.model and not (args.consolidate or args.summary):
-        print("Error: --model requires --consolidate or --summary.", file=sys.stderr)
-        sys.exit(1)
+    org = args.org
+    user = args.user or get_current_user()
 
     is_range = date_from != date_to
 
