@@ -1,6 +1,6 @@
 """Unit tests for daily_report/content.py: prepare_default_content,
-prepare_consolidated_content, _call_via_sdk, _call_via_cli, _parse_response,
-_parse_and_validate, _call_with_retry, and _load_schema.
+prepare_consolidated_content, _call_via_sdk, _call_via_sdk_agent,
+_parse_response, _parse_and_validate, _call_with_retry, and _load_schema.
 
 Run with: python3 -m pytest tests/test_consolidate.py -v
 """
@@ -431,8 +431,8 @@ class TestPrepareConsolidatedContentViaSDK:
         assert result == []
 
 
-class TestPrepareConsolidatedContentViaCLI:
-    """Tests using the CLI backend (no ANTHROPIC_API_KEY)."""
+class TestPrepareConsolidatedContentViaSDKAgent:
+    """Tests using the SDK agent backend (no ANTHROPIC_API_KEY)."""
 
     def _report_with_prs(self) -> ReportData:
         return _make_report(
@@ -446,68 +446,38 @@ class TestPrepareConsolidatedContentViaCLI:
         )
 
     @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content.subprocess.run")
-    def test_uses_cli_when_no_api_key(self, mock_run, monkeypatch):
+    @patch("daily_report.content._call_via_sdk_agent")
+    def test_uses_sdk_agent_when_no_api_key(self, mock_agent, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         response_data = {"org/alpha": [{"title": "Summary", "numbers": [10]}]}
-        # CLI with --output-format text returns raw text
-        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(response_data), stderr="")
+        mock_agent.return_value = json.dumps(response_data)
 
         report = self._report_with_prs()
         result = prepare_consolidated_content(report)
 
         assert len(result) == 1
         assert result[0].blocks[0].items[0].title == "Summary"
-        # Verify CLI was called with correct args
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        cmd = call_args[0][0]
-        assert cmd[:2] == ["claude", "-p"]
-        assert "--model" in cmd
-        assert "--output-format" in cmd
-        assert cmd[cmd.index("--output-format") + 1] == "text"
+        mock_agent.assert_called_once()
 
     @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content.subprocess.run")
-    def test_cli_failure_raises_runtime_error(self, mock_run, monkeypatch):
+    @patch("daily_report.content._call_via_sdk_agent")
+    def test_sdk_agent_error_raises_runtime_error(self, mock_agent, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="auth failed")
+        mock_agent.side_effect = RuntimeError("Claude SDK call failed: auth error")
 
         report = self._report_with_prs()
-        with pytest.raises(RuntimeError, match="Claude CLI failed"):
+        with pytest.raises(RuntimeError, match="Claude SDK call failed"):
             prepare_consolidated_content(report)
 
     @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content.subprocess.run")
-    def test_cli_not_found_raises_runtime_error(self, mock_run, monkeypatch):
+    @patch("daily_report.content._call_via_sdk_agent")
+    def test_sdk_agent_empty_response_raises_runtime_error(self, mock_agent, monkeypatch):
+        """Empty SDK output should raise a clear error."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        mock_run.side_effect = FileNotFoundError()
-
-        report = self._report_with_prs()
-        with pytest.raises(RuntimeError, match="claude.*CLI not found"):
-            prepare_consolidated_content(report)
-
-    @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content.subprocess.run")
-    def test_cli_empty_response_raises_runtime_error(self, mock_run, monkeypatch):
-        """Empty CLI output should raise a clear error."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_agent.side_effect = RuntimeError("Claude SDK returned empty response")
 
         report = self._report_with_prs()
         with pytest.raises(RuntimeError, match="empty response"):
-            prepare_consolidated_content(report)
-
-    @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content.subprocess.run")
-    def test_cli_timeout_raises_runtime_error(self, mock_run, monkeypatch):
-        """CLI timeout should raise a clear error."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        import subprocess as sp
-        mock_run.side_effect = sp.TimeoutExpired(cmd="claude", timeout=180)
-
-        report = self._report_with_prs()
-        with pytest.raises(RuntimeError, match="timed out"):
             prepare_consolidated_content(report)
 
 
@@ -530,23 +500,19 @@ class TestPrepareAiSummary:
         )
 
     @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content.subprocess.run")
-    def test_returns_trimmed_text(self, mock_run, monkeypatch):
+    @patch("daily_report.content._call_via_sdk_agent")
+    def test_returns_trimmed_text(self, mock_agent, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="  Built login feature across repos.  ", stderr="",
-        )
+        mock_agent.return_value = "  Built login feature across repos.  "
         result = prepare_ai_summary(self._report_with_prs())
         assert result == "Built login feature across repos."
 
     @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content.subprocess.run")
-    def test_no_hard_truncation(self, mock_run, monkeypatch):
+    @patch("daily_report.content._call_via_sdk_agent")
+    def test_no_hard_truncation(self, mock_agent, monkeypatch):
         """AI output is returned as-is (prompt controls length, no hard cut)."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="x" * 300, stderr="",
-        )
+        mock_agent.return_value = "x" * 300
         result = prepare_ai_summary(self._report_with_prs())
         assert len(result) == 300
 
@@ -555,20 +521,14 @@ class TestPrepareAiSummary:
         assert result == ""
 
     @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content.subprocess.run")
-    def test_uses_custom_prompt(self, mock_run, monkeypatch):
+    @patch("daily_report.content._call_via_sdk_agent")
+    def test_uses_custom_prompt(self, mock_agent, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="Custom summary.", stderr="",
-        )
+        mock_agent.return_value = "Custom summary."
         result = prepare_ai_summary(
             self._report_with_prs(), prompt="Custom prompt here",
         )
         assert result == "Custom summary."
-        call_input = mock_run.call_args[1].get("input") or mock_run.call_args[0][0]
-        # Verify the CLI received our custom prompt in stdin
-        stdin_text = mock_run.call_args.kwargs.get("input", "")
-        assert "Custom prompt here" in stdin_text
 
 
 # ---------------------------------------------------------------------------

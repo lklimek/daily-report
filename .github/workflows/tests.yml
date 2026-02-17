@@ -23,11 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest python-pptx jsonschema
-
-      - name: Install Claude Code
-        if: env.HAS_CLAUDE_TOKEN == 'true'
-        run: npm install -g @anthropic-ai/claude-code
+          pip install pytest python-pptx jsonschema claude-agent-sdk
 
       - name: Run tests
         env:

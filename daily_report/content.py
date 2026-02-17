@@ -9,16 +9,16 @@ renderer-agnostic RepoContent structures. Supports two modes:
 
 Authentication for consolidation (resolution order):
 1. ANTHROPIC_API_KEY env var  → uses anthropic Python SDK directly
-2. Claude CLI (``claude -p``) → uses whatever auth Claude Code has configured
+2. claude-agent-sdk          → uses whatever auth Claude Code has configured
    (subscription, CLAUDE_CODE_OAUTH_TOKEN, etc.)
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
-import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -404,41 +404,40 @@ def _call_via_sdk(
     return text
 
 
-def _call_via_cli(
+def _call_via_sdk_agent(
     model: str, system_prompt: str, user_message: str,
 ) -> str:
-    """Call Claude via the ``claude`` CLI (subscription / OAuth auth).
+    """Call Claude via ``claude-agent-sdk`` (subscription / OAuth auth).
 
-    Uses ``claude -p`` (print mode) which respects whatever authentication
-    the user has configured in Claude Code (subscription, OAuth token, etc.).
+    Uses the Claude Agent SDK which handles whatever authentication
+    the user has configured (subscription, OAuth token, etc.).
     """
+    from claude_agent_sdk import (  # lazy import
+        ClaudeAgentOptions,
+        ResultMessage,
+        query,
+    )
+
     full_prompt = f"{system_prompt}\n\n{user_message}"
-    try:
-        result = subprocess.run(
-            ["claude", "-p", "--model", model, "--output-format", "text"],
-            input=full_prompt,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-    except FileNotFoundError:
-        raise RuntimeError(
-            "No ANTHROPIC_API_KEY set and 'claude' CLI not found. "
-            "Either set ANTHROPIC_API_KEY or install Claude Code (claude)."
-        ) from None
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Claude CLI call timed out after 180s") from None
+    options = ClaudeAgentOptions(
+        model=model,
+        max_turns=1,
+        allowed_tools=[],
+    )
 
-    if result.returncode != 0:
-        stderr = (result.stderr or "")[:500]
-        raise RuntimeError(f"Claude CLI failed (exit {result.returncode}): {stderr}")
+    async def _run() -> str:
+        result_text = ""
+        try:
+            async for message in query(prompt=full_prompt, options=options):
+                if isinstance(message, ResultMessage):
+                    result_text = message.result or ""
+        except Exception as e:
+            raise RuntimeError(f"Claude SDK call failed: {e}") from e
+        return result_text
 
-    text = result.stdout.strip()
+    text = asyncio.run(_run())
     if not text:
-        stderr = (result.stderr or "")[:500]
-        raise RuntimeError(
-            f"Claude CLI returned empty response. stderr: {stderr}"
-        )
+        raise RuntimeError("Claude SDK returned empty response")
     return text
 
 
@@ -464,7 +463,7 @@ def _call_backend(
     """Call the AI backend (SDK or CLI) and return the raw text response."""
     if api_key:
         return _call_via_sdk(api_key, model, system_prompt, user_message)
-    return _call_via_cli(model, system_prompt, user_message)
+    return _call_via_sdk_agent(model, system_prompt, user_message)
 
 
 def _parse_and_validate(text: str, schema: dict) -> list[RepoContent]:
