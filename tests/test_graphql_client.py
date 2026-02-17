@@ -155,6 +155,8 @@ class TestPRDetailsQuery:
         assert "mergedAt" in query
         assert "additions" in query
         assert "deletions" in query
+        assert "body" in query
+        assert "files(" in query
 
     def test_build_multiple_prs(self):
         prs = [

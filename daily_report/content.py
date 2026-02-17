@@ -29,26 +29,39 @@ from daily_report.report_data import (
 )
 
 _DEFAULT_SUMMARY_PROMPT = (
-    "You are given a list of GitHub pull requests grouped by repository. "
+    "You are given a list of GitHub pull requests grouped by repository, "
+    "including PR descriptions, changed files, and diff stats. "
     "PRs are categorized as 'authored' (user's own work), 'contributed' "
     "(commits on someone else's PR), 'reviewed' (someone else's PR that "
     "the user only reviewed), or 'waiting_for_review'. "
+    "Use all provided details to understand the substance of each PR. "
+    "If a PR description or changed-files list is missing or unclear, use the "
+    "repo name, PR title, and file paths to infer what the change does. "
     "Write a single-sentence summary (max 320 characters) focusing on "
     "what the user AUTHORED or CONTRIBUTED TO as their primary work. "
+    "Focus on the high-level goals, motivations, and value delivered — not what "
+    "was changed, but WHY it matters and what problems were solved. "
     "Reviewed PRs are NOT the user's work — only mention them briefly "
     "if at all (e.g. 'also reviewed N PRs'). "
     "Return ONLY the summary text, nothing else — no quotes, no labels, no JSON."
 )
 
 _DEFAULT_PROMPT = (
-    "You are given a list of GitHub pull requests grouped by repository. "
+    "You are given a list of GitHub pull requests grouped by repository, "
+    "including PR descriptions, changed files, and diff stats. "
     "PRs are categorized as 'authored' (user's own work), 'contributed' "
     "(commits on someone else's PR), 'reviewed' (someone else's PR that "
     "the user only reviewed), or 'waiting_for_review'. "
-    "For each repository, summarize the work into 2-5 concise bullet points "
-    "describing the PURPOSE and GOALS of the work. Focus on authored and "
-    "contributed PRs as the user's primary work. Reviewed PRs are NOT the "
-    "user's own work — summarize them separately if included. "
+    "Use all provided details — descriptions, file paths, and diff sizes — to "
+    "understand the substance and scope of each PR. "
+    "If a PR description is missing or vague, infer intent from the file paths, "
+    "diff stats, and PR title. "
+    "For each repository, summarize the work into 2-5 concise bullet points. "
+    "Do NOT just repeat PR titles — explain the GOALS, MOTIVATIONS, and VALUE "
+    "of each piece of work. Why was this PR needed? What problem does it solve? "
+    "What value does it deliver to users, developers, or the system? "
+    "Focus on authored and contributed PRs as the user's primary work. "
+    "Reviewed PRs are NOT the user's own work — summarize them separately if included. "
     "Reference PR numbers. Return valid JSON only, no markdown fences. "
     'Format: {"repo_name": [{"title": "summary line", "numbers": [1,2,3]}, ...], ...}'
 )
@@ -479,18 +492,30 @@ def _build_repos_data(report: ReportData) -> dict[str, dict[str, list[dict]]]:
 
     for pr in report.authored_prs:
         category = "contributed" if pr.contributed else "authored"
-        repos[pr.repo][category].append({
+        entry: dict = {
             "number": pr.number,
             "title": pr.title,
             "status": pr.status,
-        })
+            "additions": pr.additions,
+            "deletions": pr.deletions,
+        }
+        if pr.body:
+            entry["body"] = pr.body
+        if pr.changed_files:
+            entry["changed_files"] = pr.changed_files
+        repos[pr.repo][category].append(entry)
 
     for pr in report.reviewed_prs:
-        repos[pr.repo]["reviewed"].append({
+        entry = {
             "number": pr.number,
             "title": pr.title,
             "status": pr.status,
-        })
+        }
+        if pr.body:
+            entry["body"] = pr.body
+        if pr.changed_files:
+            entry["changed_files"] = pr.changed_files
+        repos[pr.repo]["reviewed"].append(entry)
 
     for pr in report.waiting_prs:
         repos[pr.repo]["waiting_for_review"].append({

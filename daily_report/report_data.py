@@ -17,6 +17,8 @@ class AuthoredPR:
     deletions: int           # line deletions (0 for Merged/Closed)
     contributed: bool        # True if user is contributor, not author
     original_author: Optional[str]  # PR author login when contributed=True
+    body: str = ""           # PR description body (may be truncated)
+    changed_files: List[str] = field(default_factory=list)  # list of changed file paths
 
 
 @dataclass
@@ -27,6 +29,8 @@ class ReviewedPR:
     number: int
     author: str              # PR author login
     status: str              # "Open", "Draft", "Merged", "Closed"
+    body: str = ""           # PR description body (may be truncated)
+    changed_files: List[str] = field(default_factory=list)  # list of changed file paths
 
 
 @dataclass
