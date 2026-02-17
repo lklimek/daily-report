@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from daily_report.content import (
+    _build_repos_data,
     _parse_response,
     prepare_ai_summary,
     prepare_consolidated_content,
@@ -564,3 +565,107 @@ class TestPrepareAiSummary:
         # Verify the CLI received our custom prompt in stdin
         stdin_text = mock_run.call_args.kwargs.get("input", "")
         assert "Custom prompt here" in stdin_text
+
+
+# ---------------------------------------------------------------------------
+# _build_repos_data tests
+# ---------------------------------------------------------------------------
+
+class TestBuildReposData:
+    """Tests for _build_repos_data: verifies categorized structure."""
+
+    def test_authored_prs_categorized_as_authored(self):
+        report = _make_report(authored_prs=[
+            AuthoredPR(repo="org/alpha", title="Add login", number=10,
+                       status="Open", additions=50, deletions=10,
+                       contributed=False, original_author=None),
+        ])
+        result = _build_repos_data(report)
+        assert "org/alpha" in result
+        assert "authored" in result["org/alpha"]
+        assert result["org/alpha"]["authored"][0]["number"] == 10
+
+    def test_contributed_prs_categorized_as_contributed(self):
+        report = _make_report(authored_prs=[
+            AuthoredPR(repo="org/alpha", title="Fix typo", number=11,
+                       status="Merged", additions=1, deletions=1,
+                       contributed=True, original_author="other-user"),
+        ])
+        result = _build_repos_data(report)
+        assert "contributed" in result["org/alpha"]
+        assert "authored" not in result["org/alpha"]
+
+    def test_reviewed_prs_categorized_as_reviewed(self):
+        report = _make_report(reviewed_prs=[
+            ReviewedPR(repo="org/beta", title="Refactor module", number=20,
+                       author="colleague", status="Open"),
+        ])
+        result = _build_repos_data(report)
+        assert "reviewed" in result["org/beta"]
+        assert result["org/beta"]["reviewed"][0]["number"] == 20
+
+    def test_waiting_prs_categorized_as_waiting(self):
+        report = _make_report(waiting_prs=[
+            WaitingPR(repo="org/gamma", title="Waiting PR", number=30,
+                      reviewers=["reviewer1"], created_at="2026-02-10",
+                      days_waiting=3),
+        ])
+        result = _build_repos_data(report)
+        assert "waiting_for_review" in result["org/gamma"]
+
+    def test_only_nonempty_categories_present(self):
+        report = _make_report(
+            authored_prs=[
+                AuthoredPR(repo="org/alpha", title="Add login", number=10,
+                           status="Open", additions=50, deletions=10,
+                           contributed=False, original_author=None),
+            ],
+            reviewed_prs=[
+                ReviewedPR(repo="org/alpha", title="Review something", number=20,
+                           author="other", status="Open"),
+            ],
+        )
+        result = _build_repos_data(report)
+        cats = result["org/alpha"]
+        assert "authored" in cats
+        assert "reviewed" in cats
+        assert "contributed" not in cats
+        assert "waiting_for_review" not in cats
+
+    def test_returns_plain_dicts_not_defaultdicts(self):
+        from collections import defaultdict
+        report = _make_report(authored_prs=[
+            AuthoredPR(repo="org/alpha", title="Test", number=1,
+                       status="Open", additions=0, deletions=0,
+                       contributed=False, original_author=None),
+        ])
+        result = _build_repos_data(report)
+        assert type(result) is dict
+        assert type(result["org/alpha"]) is dict
+
+    def test_empty_report_returns_empty_dict(self):
+        report = _make_report()
+        result = _build_repos_data(report)
+        assert result == {}
+
+    def test_mixed_repos_and_categories(self):
+        report = _make_report(
+            authored_prs=[
+                AuthoredPR(repo="org/alpha", title="Feature", number=1,
+                           status="Open", additions=10, deletions=5,
+                           contributed=False, original_author=None),
+            ],
+            reviewed_prs=[
+                ReviewedPR(repo="org/beta", title="Review", number=2,
+                           author="other", status="Merged"),
+            ],
+            waiting_prs=[
+                WaitingPR(repo="org/alpha", title="Waiting", number=3,
+                          reviewers=["rev"], created_at="2026-02-10",
+                          days_waiting=1),
+            ],
+        )
+        result = _build_repos_data(report)
+        assert set(result.keys()) == {"org/alpha", "org/beta"}
+        assert set(result["org/alpha"].keys()) == {"authored", "waiting_for_review"}
+        assert set(result["org/beta"].keys()) == {"reviewed"}

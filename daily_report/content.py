@@ -30,16 +30,26 @@ from daily_report.report_data import (
 
 _DEFAULT_SUMMARY_PROMPT = (
     "You are given a list of GitHub pull requests grouped by repository. "
-    "Write a single-sentence summary of the overall work (max 320 characters). "
-    "Focus on the high-level goals and themes, not individual PRs. "
+    "PRs are categorized as 'authored' (user's own work), 'contributed' "
+    "(commits on someone else's PR), 'reviewed' (someone else's PR that "
+    "the user only reviewed), or 'waiting_for_review'. "
+    "Write a single-sentence summary (max 320 characters) focusing on "
+    "what the user AUTHORED or CONTRIBUTED TO as their primary work. "
+    "Reviewed PRs are NOT the user's work — only mention them briefly "
+    "if at all (e.g. 'also reviewed N PRs'). "
     "Return ONLY the summary text, nothing else — no quotes, no labels, no JSON."
 )
 
 _DEFAULT_PROMPT = (
     "You are given a list of GitHub pull requests grouped by repository. "
+    "PRs are categorized as 'authored' (user's own work), 'contributed' "
+    "(commits on someone else's PR), 'reviewed' (someone else's PR that "
+    "the user only reviewed), or 'waiting_for_review'. "
     "For each repository, summarize the work into 2-5 concise bullet points "
-    "describing the PURPOSE and GOALS of the work. Reference PR numbers. "
-    "Return valid JSON only, no markdown fences. "
+    "describing the PURPOSE and GOALS of the work. Focus on authored and "
+    "contributed PRs as the user's primary work. Reviewed PRs are NOT the "
+    "user's own work — summarize them separately if included. "
+    "Reference PR numbers. Return valid JSON only, no markdown fences. "
     'Format: {"repo_name": [{"title": "summary line", "numbers": [1,2,3]}, ...], ...}'
 )
 
@@ -458,31 +468,35 @@ def _parse_response(text: str) -> list[RepoContent]:
     return result
 
 
-def _build_repos_data(report: ReportData) -> dict[str, list[dict]]:
-    """Build a dict of repo -> PR summaries for the AI prompt."""
-    repos: dict[str, list[dict]] = defaultdict(list)
+def _build_repos_data(report: ReportData) -> dict[str, dict[str, list[dict]]]:
+    """Build a dict of repo -> categorized PR summaries for the AI prompt.
+
+    Returns:
+        ``{repo: {authored: [...], contributed: [...], reviewed: [...], waiting_for_review: [...]}}``
+        Only non-empty categories are included per repo.
+    """
+    repos: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
 
     for pr in report.authored_prs:
-        repos[pr.repo].append({
+        category = "contributed" if pr.contributed else "authored"
+        repos[pr.repo][category].append({
             "number": pr.number,
             "title": pr.title,
             "status": pr.status,
-            "type": "contributed" if pr.contributed else "authored",
         })
 
     for pr in report.reviewed_prs:
-        repos[pr.repo].append({
+        repos[pr.repo]["reviewed"].append({
             "number": pr.number,
             "title": pr.title,
             "status": pr.status,
-            "type": "reviewed",
         })
 
     for pr in report.waiting_prs:
-        repos[pr.repo].append({
+        repos[pr.repo]["waiting_for_review"].append({
             "number": pr.number,
             "title": pr.title,
-            "type": "waiting_for_review",
         })
 
-    return dict(repos)
+    # Convert nested defaultdicts to plain dicts for clean JSON serialization
+    return {repo: dict(categories) for repo, categories in repos.items()}
