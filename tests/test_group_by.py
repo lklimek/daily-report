@@ -314,9 +314,9 @@ class TestFormatMarkdownProject:
         assert "## `org/alpha`" in self.md
 
     def test_block_heading_no_backticks(self):
-        assert "- **Open**" in self.md
-        # Should NOT have backticks around status heading
-        assert "**`Open`**" not in self.md
+        assert "### Open" in self.md
+        # Should NOT have backticks around status heading in project mode
+        assert "### `Open`" not in self.md
 
     def test_pr_link_uses_repo_name(self):
         assert "https://github.com/org/alpha/pull/10" in self.md
@@ -335,7 +335,7 @@ class TestFormatMarkdownStatus:
         assert "## `Open`" not in self.md
 
     def test_block_heading_has_backticks(self):
-        assert "- **`org/alpha`**" in self.md
+        assert "### `org/alpha`" in self.md
 
 
 class TestFormatMarkdownContribution:
@@ -351,7 +351,7 @@ class TestFormatMarkdownContribution:
         assert "## `Authored" not in self.md
 
     def test_block_heading_has_backticks(self):
-        assert "- **`org/alpha`**" in self.md
+        assert "### `org/alpha`" in self.md
 
     def test_pr_link_uses_block_heading(self):
         # In contribution mode, block.heading is the project name

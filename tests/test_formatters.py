@@ -363,7 +363,7 @@ class TestFormatMarkdownConsolidated:
         ]
         md = format_markdown(report)
         assert "## `org/alpha`" in md
-        assert "- **Summary**" in md
+        assert "### Summary" in md
         assert "[#10](https://github.com/org/alpha/pull/10)" in md
         assert "[#11](https://github.com/org/alpha/pull/11)" in md
         assert "[#12](https://github.com/org/alpha/pull/12)" in md

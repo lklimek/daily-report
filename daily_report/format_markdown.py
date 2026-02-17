@@ -33,19 +33,20 @@ def format_markdown(report: ReportData, group_by: str = "project") -> str:
                 lines.append(f"## {repo.repo_name}")
             lines.append("")
             for block in repo.blocks:
-                # Block heading as L1 bullet
-                if group_by == "project":
-                    lines.append(f"- **{block.heading}**")
+                # Block heading as H3; backtick-wrap repo names (org/repo) only
+                if "/" in block.heading:
+                    lines.append(f"### `{block.heading}`")
                 else:
-                    lines.append(f"- **`{block.heading}`**")
+                    lines.append(f"### {block.heading}")
+                lines.append("")
                 # Determine repo name for PR links
                 if group_by == "project":
                     link_repo = repo.repo_name
                 else:
                     link_repo = block.heading
-                # Items as indented L2 bullets
+                # Items as bullets
                 for item in block.items:
-                    lines.append(f"  - {_render_item(item, link_repo)}")
+                    lines.append(f"- {_render_item(item, link_repo)}")
             lines.append("")
     else:
         lines.append("_No PR activity found._")

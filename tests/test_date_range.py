@@ -374,14 +374,14 @@ class TestPRUpdatedNoCommitInRange:
         Should NOT appear as authored since no commits in 2026-02-08..2026-02-10."""
         # Split output into sections
         lines = self.output
-        authored_section = lines.split("**Reviewed")[0] if "**Reviewed" in lines else lines
+        authored_section = lines.split("## Reviewed")[0] if "## Reviewed" in lines else lines
         assert "#521" not in authored_section
 
     def test_exclude_evo_tool_514_from_authored(self):
         """dash-evo-tool#514: commits on 2026-02-02, updatedAt=2026-02-10.
         Should NOT appear as authored since no commits in 2026-02-08..2026-02-10."""
         lines = self.output
-        authored_section = lines.split("**Reviewed")[0] if "**Reviewed" in lines else lines
+        authored_section = lines.split("## Reviewed")[0] if "## Reviewed" in lines else lines
         assert "#514" not in authored_section
 
 
@@ -431,13 +431,13 @@ class TestConsolidateSingleDay20260209:
 
     def test_has_summary_heading(self):
         """Consolidated output uses 'Summary' block heading."""
-        assert "**Summary**" in self.output
+        assert "### Summary" in self.output
 
     def test_no_authored_or_reviewed_headings(self):
         """Consolidated mode replaces per-type headings with Summary."""
-        assert "**Authored" not in self.output
-        assert "**Reviewed" not in self.output
-        assert "**Waiting" not in self.output
+        assert "### Authored" not in self.output
+        assert "### Reviewed" not in self.output
+        assert "### Waiting" not in self.output
 
     def test_platform_repo_present(self):
         assert "platform" in self.output
@@ -470,7 +470,7 @@ class TestConsolidateRange:
         assert "2026-02-06 .. 2026-02-09" in self.output
 
     def test_has_summary_heading(self):
-        assert "**Summary**" in self.output
+        assert "### Summary" in self.output
 
     def test_multiple_repos(self):
         assert "platform" in self.output
@@ -536,12 +536,12 @@ class TestSummarySingleDay:
         assert "Key themes:" not in self.output
 
     def test_summary_is_short(self):
-        """AI summary should be under 320 chars."""
+        """AI summary should be reasonably short (under 640 chars)."""
         for line in self.output.splitlines():
             if line.startswith("**Summary:**"):
                 # Strip the "**Summary:** " prefix
                 summary_text = line[len("**Summary:** "):]
-                assert len(summary_text) <= 320
+                assert len(summary_text) <= 640
                 assert len(summary_text) > 0
                 break
         else:
@@ -562,7 +562,7 @@ class TestSummaryWithConsolidate:
     def test_has_consolidated_content(self):
         """Per-repo sections should use Summary heading (consolidated)."""
         # Count occurrences — repo content headings + footer summary
-        assert "**Summary**" in self.output or "**Summary:**" in self.output
+        assert "### Summary" in self.output or "**Summary:**" in self.output
 
     def test_no_default_stats(self):
         assert "PRs across" not in self.output

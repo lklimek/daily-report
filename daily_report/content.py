@@ -438,17 +438,46 @@ def _call_via_cli(
     return text
 
 
+import re
+
+_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n\s*```", re.DOTALL)
+
+
+def _extract_json(text: str) -> str:
+    """Extract a JSON object from an AI response.
+
+    Tries in order:
+    1. Direct parse of the full text (clean JSON response).
+    2. Extract content from markdown code fences (```json ... ```).
+    3. Find the first ``{`` and last ``}`` and try to parse that substring.
+    """
+    stripped = text.strip()
+
+    # 1. Try direct parse
+    try:
+        json.loads(stripped)
+        return stripped
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 2. Try extracting from markdown fences
+    match = _FENCED_JSON_RE.search(stripped)
+    if match:
+        return match.group(1).strip()
+
+    # 3. Find outermost braces
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end > start:
+        return stripped[start:end + 1]
+
+    # Give up — return original text so caller raises a clear error
+    return stripped
+
+
 def _parse_response(text: str) -> list[RepoContent]:
     """Parse Claude's JSON response into RepoContent objects."""
-    # Strip markdown code fences if present
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.split("\n")
-        # Remove first and last lines (``` markers)
-        lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        stripped = "\n".join(lines)
+    stripped = _extract_json(text)
 
     try:
         parsed = json.loads(stripped)
