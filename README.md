@@ -168,11 +168,7 @@ Alternatively, use `--repos-dir ~/git` to auto-discover all repos in a directory
 
 A ready-to-use workflow is included at `.github/workflows/daily-report.yml`. It runs at 10:00 UTC Monday–Friday and can also be triggered manually. It iterates over a matrix of GitHub usernames and posts reports to Slack.
 
-1. Add secrets in your repo settings:
-   - `GH_REPORT_TOKEN` — a Personal Access Token with `public_repo` (and `read:org` if you fetch org members).
-   - `SLACK_WEBHOOK_URL` — Slack Incoming Webhook for the destination channel.
-2. Edit the matrix in `daily-report.yml` (`matrix.user`) to list the usernames you want reported. For a single user, keep one entry. You can override the list and date when running the workflow manually via `workflow_dispatch` inputs.
-3. (Optional) Adjust the cron expression if you want a different schedule or timezone.
+Edit the matrix in `daily-report.yml` (`matrix.user`) to list the usernames that need to be reported. For a single user, keep one entry. The list and date can be overridden when running the workflow manually via `workflow_dispatch` inputs.
 
 The workflow runs the tool in API-only mode (`--no-local`), scoping to the `dashpay` org and posting one report per listed user.
 
