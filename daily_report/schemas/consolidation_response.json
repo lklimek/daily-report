@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Consolidation Response",
+  "description": "Map of repository names to lists of summary items. Each key is a repo name (e.g. 'org/repo'), each value is an array of summary objects.",
+  "type": "object",
+  "additionalProperties": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "A concise summary line describing the work"
+        },
+        "numbers": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "description": "PR numbers referenced by this summary line"
+        }
+      },
+      "required": ["title", "numbers"],
+      "additionalProperties": false
+    }
+  }
+}

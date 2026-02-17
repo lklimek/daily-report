@@ -1,5 +1,6 @@
 """Unit tests for daily_report/content.py: prepare_default_content,
-prepare_consolidated_content, _call_via_sdk, _call_via_cli, and _parse_response.
+prepare_consolidated_content, _call_via_sdk, _call_via_cli, _parse_response,
+_parse_and_validate, _call_with_retry, and _load_schema.
 
 Run with: python3 -m pytest tests/test_consolidate.py -v
 """
@@ -15,6 +16,9 @@ import pytest
 
 from daily_report.content import (
     _build_repos_data,
+    _call_with_retry,
+    _load_schema,
+    _parse_and_validate,
     _parse_response,
     prepare_ai_summary,
     prepare_consolidated_content,
@@ -748,3 +752,156 @@ class TestBuildReposData:
             "number": 3,
             "title": "Waiting",
         }
+
+
+# ---------------------------------------------------------------------------
+# _load_schema tests
+# ---------------------------------------------------------------------------
+
+class TestLoadSchema:
+    """Tests for _load_schema."""
+
+    def test_returns_dict(self):
+        schema = _load_schema()
+        assert isinstance(schema, dict)
+
+    def test_schema_has_expected_structure(self):
+        schema = _load_schema()
+        assert schema["type"] == "object"
+        assert "additionalProperties" in schema
+        items = schema["additionalProperties"]["items"]
+        assert "title" in items["properties"]
+        assert "numbers" in items["properties"]
+
+    def test_caching_returns_same_object(self):
+        s1 = _load_schema()
+        s2 = _load_schema()
+        assert s1 is s2
+
+
+# ---------------------------------------------------------------------------
+# _parse_and_validate tests
+# ---------------------------------------------------------------------------
+
+class TestParseAndValidate:
+    """Tests for _parse_and_validate with schema validation."""
+
+    def _schema(self):
+        return _load_schema()
+
+    def test_valid_json_returns_repo_contents(self):
+        data = {"org/repo": [{"title": "Summary", "numbers": [1]}]}
+        result = _parse_and_validate(json.dumps(data), self._schema())
+        assert len(result) == 1
+        assert result[0].repo_name == "org/repo"
+        assert result[0].blocks[0].items[0].title == "Summary"
+
+    def test_invalid_json_raises_runtime_error(self):
+        with pytest.raises(RuntimeError, match="Failed to parse"):
+            _parse_and_validate("not json", self._schema())
+
+    def test_non_dict_raises_runtime_error(self):
+        with pytest.raises(RuntimeError, match="not a JSON object"):
+            _parse_and_validate("[1, 2, 3]", self._schema())
+
+    def test_schema_violation_raises_runtime_error(self):
+        """Response with wrong types should fail schema validation."""
+        pytest.importorskip("jsonschema")
+        # numbers should be array of ints, not a string
+        bad_data = {"org/repo": [{"title": "Summary", "numbers": "not-a-list"}]}
+        with pytest.raises(RuntimeError, match="schema validation"):
+            _parse_and_validate(json.dumps(bad_data), self._schema())
+
+    def test_extra_properties_rejected_by_schema(self):
+        """Items with extra properties should fail additionalProperties: false."""
+        pytest.importorskip("jsonschema")
+        bad_data = {"org/repo": [{"title": "Summary", "numbers": [1], "extra": "bad"}]}
+        with pytest.raises(RuntimeError, match="schema validation"):
+            _parse_and_validate(json.dumps(bad_data), self._schema())
+
+    def test_works_without_jsonschema_installed(self):
+        """When jsonschema is not installed, validation is skipped gracefully."""
+        data = {"org/repo": [{"title": "Summary", "numbers": [1]}]}
+        with patch.dict(sys.modules, {"jsonschema": None}):
+            result = _parse_and_validate(json.dumps(data), self._schema())
+        assert len(result) == 1
+
+    def test_fenced_json_extracted(self):
+        data = {"org/repo": [{"title": "Fenced", "numbers": [2]}]}
+        wrapped = "Here is the JSON:\n```json\n" + json.dumps(data) + "\n```"
+        result = _parse_and_validate(wrapped, self._schema())
+        assert result[0].blocks[0].items[0].title == "Fenced"
+
+
+# ---------------------------------------------------------------------------
+# _call_with_retry tests
+# ---------------------------------------------------------------------------
+
+class TestCallWithRetry:
+    """Tests for _call_with_retry retry logic."""
+
+    def _schema(self):
+        return _load_schema()
+
+    @patch("daily_report.content._call_backend")
+    def test_success_on_first_call(self, mock_backend):
+        data = {"org/repo": [{"title": "Good", "numbers": [1]}]}
+        mock_backend.return_value = json.dumps(data)
+
+        result = _call_with_retry("key", "model", "sys", "user", self._schema())
+        assert len(result) == 1
+        assert result[0].blocks[0].items[0].title == "Good"
+        assert mock_backend.call_count == 1
+
+    @patch("daily_report.content._call_backend")
+    def test_retry_on_first_failure(self, mock_backend):
+        good_data = {"org/repo": [{"title": "Fixed", "numbers": [1]}]}
+        mock_backend.side_effect = [
+            "This is not valid JSON at all",  # first call fails
+            json.dumps(good_data),             # retry succeeds
+        ]
+
+        result = _call_with_retry("key", "model", "sys", "user", self._schema())
+        assert len(result) == 1
+        assert result[0].blocks[0].items[0].title == "Fixed"
+        assert mock_backend.call_count == 2
+
+    @patch("daily_report.content._call_backend")
+    def test_retry_includes_error_and_schema(self, mock_backend):
+        good_data = {"org/repo": [{"title": "OK", "numbers": [1]}]}
+        mock_backend.side_effect = [
+            "bad response",
+            json.dumps(good_data),
+        ]
+
+        _call_with_retry("key", "model", "sys", "user", self._schema())
+        retry_msg = mock_backend.call_args_list[1][0][3]  # 4th arg = user_message
+        assert "could not be parsed" in retry_msg
+        assert "bad response" in retry_msg
+        assert "Expected JSON schema" in retry_msg
+
+    @patch("daily_report.content._call_backend")
+    def test_both_calls_fail_raises_error(self, mock_backend):
+        mock_backend.side_effect = [
+            "bad json first",
+            "bad json second",
+        ]
+
+        with pytest.raises(RuntimeError, match="Failed to parse"):
+            _call_with_retry("key", "model", "sys", "user", self._schema())
+        assert mock_backend.call_count == 2
+
+    @patch("daily_report.content._call_backend")
+    def test_schema_validation_failure_triggers_retry(self, mock_backend):
+        """Schema validation error (not just JSON parse) triggers retry."""
+        pytest.importorskip("jsonschema")
+        bad_data = {"org/repo": [{"title": "X", "numbers": "not-a-list"}]}
+        good_data = {"org/repo": [{"title": "Fixed", "numbers": [1]}]}
+        mock_backend.side_effect = [
+            json.dumps(bad_data),
+            json.dumps(good_data),
+        ]
+
+        result = _call_with_retry("key", "model", "sys", "user", self._schema())
+        assert result[0].blocks[0].items[0].title == "Fixed"
+        assert mock_backend.call_count == 2

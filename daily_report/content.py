@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import defaultdict
+from pathlib import Path
 
 from daily_report.report_data import (
     ContentBlock,
@@ -62,8 +64,9 @@ _DEFAULT_PROMPT = (
     "What value does it deliver to users, developers, or the system? "
     "Focus on authored and contributed PRs as the user's primary work. "
     "Reviewed PRs are NOT the user's own work — summarize them separately if included. "
-    "Reference PR numbers. Return valid JSON only, no markdown fences. "
-    'Format: {"repo_name": [{"title": "summary line", "numbers": [1,2,3]}, ...], ...}'
+    "Reference PR numbers. Return valid JSON only, no markdown fences, no explanation. "
+    'Format: {"repo_name": [{"title": "summary line", "numbers": [1,2,3]}, ...], ...}. '
+    "A JSON schema for the expected output will be provided alongside the data."
 )
 
 
@@ -305,7 +308,8 @@ def prepare_consolidated_content(
     """Build AI-consolidated RepoContent list using the Claude API.
 
     Groups PRs by repo, sends all repos in one Claude API call, and
-    returns summarised RepoContent objects.
+    returns summarised RepoContent objects.  On JSON parse/validation
+    failure, retries once with the error and the expected JSON schema.
 
     Authentication: uses ANTHROPIC_API_KEY with the SDK when available,
     otherwise falls back to the ``claude`` CLI (which handles subscription
@@ -326,17 +330,18 @@ def prepare_consolidated_content(
     if not repos_data:
         return []
 
+    schema = _load_schema()
     system_prompt = prompt or _DEFAULT_PROMPT
-    user_message = json.dumps(repos_data, indent=2)
 
-    # Choose backend: SDK (for API key) or CLI (for subscription/OAuth)
+    # Include schema in user message so the AI can self-validate
+    user_message = (
+        json.dumps(repos_data, indent=2)
+        + "\n\n---\nExpected JSON schema for your response:\n"
+        + json.dumps(schema, indent=2)
+    )
+
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if api_key:
-        text = _call_via_sdk(api_key, model, system_prompt, user_message)
-    else:
-        text = _call_via_cli(model, system_prompt, user_message)
-
-    return _parse_response(text)
+    return _call_with_retry(api_key, model, system_prompt, user_message, schema)
 
 
 def prepare_ai_summary(
@@ -367,11 +372,7 @@ def prepare_ai_summary(
     user_message = json.dumps(repos_data, indent=2)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if api_key:
-        text = _call_via_sdk(api_key, model, system_prompt, user_message)
-    else:
-        text = _call_via_cli(model, system_prompt, user_message)
-
+    text = _call_backend(api_key, model, system_prompt, user_message)
     return text.strip()
 
 
@@ -438,9 +439,106 @@ def _call_via_cli(
     return text
 
 
-import re
-
 _FENCED_JSON_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n\s*```", re.DOTALL)
+
+
+_schema_cache: dict | None = None
+
+
+def _load_schema() -> dict:
+    """Load and cache the consolidation response JSON schema."""
+    global _schema_cache
+    if _schema_cache is None:
+        schema_path = Path(__file__).parent / "schemas" / "consolidation_response.json"
+        with open(schema_path) as f:
+            _schema_cache = json.load(f)
+    return _schema_cache
+
+
+def _call_backend(
+    api_key: str, model: str, system_prompt: str, user_message: str,
+) -> str:
+    """Call the AI backend (SDK or CLI) and return the raw text response."""
+    if api_key:
+        return _call_via_sdk(api_key, model, system_prompt, user_message)
+    return _call_via_cli(model, system_prompt, user_message)
+
+
+def _parse_and_validate(text: str, schema: dict) -> list[RepoContent]:
+    """Extract JSON from AI text, validate against schema, build RepoContent.
+
+    Raises RuntimeError if extraction or validation fails.
+    """
+    stripped = _extract_json(text)
+
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Failed to parse Claude response as JSON: {e}") from e
+
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Claude response is not a JSON object")
+
+    # Validate against schema if jsonschema is available
+    try:
+        import jsonschema
+        jsonschema.validate(instance=parsed, schema=schema)
+    except ImportError:
+        pass  # jsonschema not installed — skip validation
+    except jsonschema.ValidationError as e:
+        raise RuntimeError(f"Response failed schema validation: {e.message}") from e
+
+    # Build RepoContent list
+    result: list[RepoContent] = []
+    for repo_name in sorted(parsed):
+        items_data = parsed[repo_name]
+        if not isinstance(items_data, list):
+            continue
+        items: list[ContentItem] = []
+        for item in items_data:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", ""))[:500]
+            numbers = item.get("numbers", [])
+            if not isinstance(numbers, list):
+                numbers = []
+            numbers = [n for n in numbers if isinstance(n, int)]
+            if title:
+                items.append(ContentItem(title=title, numbers=numbers))
+        if items:
+            block = ContentBlock(heading="Summary", items=items)
+            result.append(RepoContent(repo_name=repo_name, blocks=[block]))
+
+    return result
+
+
+def _call_with_retry(
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    user_message: str,
+    schema: dict,
+) -> list[RepoContent]:
+    """Call the AI backend and parse/validate the response.
+
+    On failure, retries once with the error message and expected schema
+    to give the AI a chance to correct its output.
+    """
+    text = _call_backend(api_key, model, system_prompt, user_message)
+    try:
+        return _parse_and_validate(text, schema)
+    except RuntimeError as first_error:
+        # Single retry with correction prompt
+        correction = (
+            "Your previous response could not be parsed. Error:\n"
+            f"{first_error}\n\n"
+            f"Your response (first 2000 chars):\n{text[:2000]}\n\n"
+            f"Expected JSON schema:\n{json.dumps(schema, indent=2)}\n\n"
+            "Return ONLY the corrected JSON — no markdown fences, "
+            "no explanation, no preamble."
+        )
+        retry_text = _call_backend(api_key, model, system_prompt, correction)
+        return _parse_and_validate(retry_text, schema)
 
 
 def _extract_json(text: str) -> str:
