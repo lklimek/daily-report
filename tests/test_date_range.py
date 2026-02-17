@@ -578,3 +578,26 @@ class TestSummaryCliValidation:
         output, rc = run_report("--model", "claude-haiku-4-5-20251001")
         assert rc != 0
         assert "--model requires --consolidate or --summary" in output
+
+
+# ---------------------------------------------------------------------------
+# TC11: --waiting-days flag
+# ---------------------------------------------------------------------------
+
+class TestWaitingDays:
+    """Verify --waiting-days limits the age of 'Waiting for review' items."""
+
+    def test_waiting_days_1_excludes_old_waiting_prs(self):
+        """--waiting-days 1 on a historical date range should exclude old PRs.
+
+        Any PR waiting >1 day is filtered out. Since we're querying a past
+        date range (Feb 2026), most waiting PRs have days_waiting >> 1 and
+        should be excluded.
+        """
+        output = run_report_ok(
+            "--from", "2026-02-06", "--to", "2026-02-09",
+            "--waiting-days", "1",
+        )
+        # With a 1-day limit on a date far in the past, no waiting PRs
+        # should survive the filter (they'd all be >1 day old)
+        assert "### Waiting for Review" not in output
