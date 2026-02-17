@@ -24,10 +24,13 @@ from collections import defaultdict
 from pathlib import Path
 
 from daily_report.report_data import (
+    AuthoredPR,
     ContentBlock,
     ContentItem,
     RepoContent,
     ReportData,
+    ReviewedPR,
+    WaitingPR,
 )
 
 _DEFAULT_SUMMARY_PROMPT = (
@@ -73,17 +76,20 @@ _DEFAULT_PROMPT = (
 )
 
 
-def _dedup_pr_lists(report: ReportData):
+def _dedup_pr_lists(
+    report: ReportData,
+) -> tuple[list[AuthoredPR], list[ReviewedPR], list[WaitingPR]]:
     """Deduplicate PR lists by (repo, number) with priority: waiting > authored > reviewed.
 
     Returns:
         Tuple of (authored_prs, reviewed_prs, waiting_prs) with duplicates removed.
     """
     waiting_keys = {(pr.repo, pr.number) for pr in report.waiting_prs}
-    authored_keys = {(pr.repo, pr.number) for pr in report.authored_prs}
 
     authored_prs = [pr for pr in report.authored_prs
                     if (pr.repo, pr.number) not in waiting_keys]
+    authored_keys = {(pr.repo, pr.number) for pr in authored_prs}
+
     reviewed_prs = [pr for pr in report.reviewed_prs
                     if (pr.repo, pr.number) not in waiting_keys
                     and (pr.repo, pr.number) not in authored_keys]
