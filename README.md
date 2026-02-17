@@ -97,11 +97,14 @@ python -m daily_report --consolidate --summary --model claude-haiku-4-5-20251001
 | `--slides-output` | *(auto-generated)* | Custom output path for `.pptx` file (requires `--slides`) |
 | `--slack` | `false` | Post report to Slack via Incoming Webhook instead of Markdown output |
 | `--slack-webhook` | *(env var or config)* | Slack webhook URL (requires `--slack`); falls back to `SLACK_WEBHOOK_URL` env var or `slack_webhook` in config file |
+| `--waiting-days` | `365` | Max age (days) for "Waiting for review" PRs; hides PRs waiting longer than this (minimum: 1) |
 | `--consolidate` | `false` | Consolidate PR lists into AI-generated summaries per repository |
 | `--summary` | `false` | Replace default summary stats with a short AI-generated summary (<160 chars) |
 | `--model` | `claude-sonnet-4-5-20250929` | Claude model for AI features (requires `--consolidate` or `--summary`) |
 
 `--date` and `--from`/`--to` are mutually exclusive. When neither is provided, defaults to today.
+
+Waiting-for-review items are limited to PRs where the reviewer was assigned within the last `--waiting-days` (default 365), so very old open PRs don't clutter daily reports.
 
 ## Slides Export
 
