@@ -17,6 +17,7 @@ import pytest
 from daily_report.content import (
     _build_repos_data,
     _call_with_retry,
+    _dedup_pr_lists,
     _load_schema,
     _parse_and_validate,
     _parse_response,
@@ -865,3 +866,106 @@ class TestCallWithRetry:
         result = _call_with_retry("key", "model", "sys", "user", self._schema())
         assert result[0].blocks[0].items[0].title == "Fixed"
         assert mock_backend.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# PR deduplication tests
+# ---------------------------------------------------------------------------
+
+class TestPRDeduplication:
+    """Ensure each PR appears in only one section, with priority:
+    Waiting for Review > Authored/Contributed > Reviewed."""
+
+    def _pr_authored(self, repo="org/repo", number=1, title="PR"):
+        return AuthoredPR(
+            repo=repo, title=title, number=number,
+            status="Open", additions=10, deletions=5,
+            contributed=False, original_author=None,
+        )
+
+    def _pr_reviewed(self, repo="org/repo", number=1, title="PR"):
+        return ReviewedPR(
+            repo=repo, title=title, number=number,
+            author="other-user", status="Open",
+        )
+
+    def _pr_waiting(self, repo="org/repo", number=1, title="PR"):
+        return WaitingPR(
+            repo=repo, title=title, number=number,
+            reviewers=["reviewer1"], created_at="2026-02-10",
+            days_waiting=3,
+        )
+
+    def test_dedup_waiting_removes_from_authored_and_reviewed(self):
+        report = _make_report(
+            authored_prs=[self._pr_authored(number=1)],
+            reviewed_prs=[self._pr_reviewed(number=1)],
+            waiting_prs=[self._pr_waiting(number=1)],
+        )
+        authored, reviewed, waiting = _dedup_pr_lists(report)
+        assert len(waiting) == 1
+        assert len(authored) == 0
+        assert len(reviewed) == 0
+
+    def test_dedup_authored_removes_from_reviewed(self):
+        report = _make_report(
+            authored_prs=[self._pr_authored(number=1)],
+            reviewed_prs=[self._pr_reviewed(number=1)],
+        )
+        authored, reviewed, waiting = _dedup_pr_lists(report)
+        assert len(authored) == 1
+        assert len(reviewed) == 0
+
+    def test_dedup_no_overlap_keeps_all(self):
+        report = _make_report(
+            authored_prs=[self._pr_authored(number=1)],
+            reviewed_prs=[self._pr_reviewed(number=2)],
+            waiting_prs=[self._pr_waiting(number=3)],
+        )
+        authored, reviewed, waiting = _dedup_pr_lists(report)
+        assert len(authored) == 1
+        assert len(reviewed) == 1
+        assert len(waiting) == 1
+
+    def test_dedup_different_repos_not_conflated(self):
+        report = _make_report(
+            authored_prs=[self._pr_authored(repo="org/alpha", number=1)],
+            reviewed_prs=[self._pr_reviewed(repo="org/beta", number=1)],
+        )
+        authored, reviewed, waiting = _dedup_pr_lists(report)
+        assert len(authored) == 1
+        assert len(reviewed) == 1
+
+    def test_default_content_dedup_waiting_over_authored(self):
+        report = _make_report(
+            authored_prs=[self._pr_authored(number=5)],
+            waiting_prs=[self._pr_waiting(number=5)],
+        )
+        result = prepare_default_content(report)
+        assert len(result) == 1
+        headings = [b.heading for b in result[0].blocks]
+        assert "Waiting for Review" in headings
+        assert "Authored / Contributed" not in headings
+
+    def test_default_content_dedup_authored_over_reviewed(self):
+        report = _make_report(
+            authored_prs=[self._pr_authored(number=5)],
+            reviewed_prs=[self._pr_reviewed(number=5)],
+        )
+        result = prepare_default_content(report)
+        assert len(result) == 1
+        headings = [b.heading for b in result[0].blocks]
+        assert "Authored / Contributed" in headings
+        assert "Reviewed" not in headings
+
+    def test_build_repos_data_dedup(self):
+        report = _make_report(
+            authored_prs=[self._pr_authored(number=1)],
+            reviewed_prs=[self._pr_reviewed(number=1)],
+            waiting_prs=[self._pr_waiting(number=1)],
+        )
+        data = _build_repos_data(report)
+        repo_data = data["org/repo"]
+        assert "waiting_for_review" in repo_data
+        assert "authored" not in repo_data
+        assert "reviewed" not in repo_data

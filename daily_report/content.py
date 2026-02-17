@@ -73,6 +73,24 @@ _DEFAULT_PROMPT = (
 )
 
 
+def _dedup_pr_lists(report: ReportData):
+    """Deduplicate PR lists by (repo, number) with priority: waiting > authored > reviewed.
+
+    Returns:
+        Tuple of (authored_prs, reviewed_prs, waiting_prs) with duplicates removed.
+    """
+    waiting_keys = {(pr.repo, pr.number) for pr in report.waiting_prs}
+    authored_keys = {(pr.repo, pr.number) for pr in report.authored_prs}
+
+    authored_prs = [pr for pr in report.authored_prs
+                    if (pr.repo, pr.number) not in waiting_keys]
+    reviewed_prs = [pr for pr in report.reviewed_prs
+                    if (pr.repo, pr.number) not in waiting_keys
+                    and (pr.repo, pr.number) not in authored_keys]
+
+    return authored_prs, reviewed_prs, report.waiting_prs
+
+
 def prepare_default_content(report: ReportData) -> list[RepoContent]:
     """Build RepoContent list from raw PR lists, grouped by repo.
 
@@ -82,16 +100,18 @@ def prepare_default_content(report: ReportData) -> list[RepoContent]:
     Returns:
         Alphabetically sorted list of RepoContent objects.
     """
+    authored_prs, reviewed_prs, waiting_prs = _dedup_pr_lists(report)
+
     # Group PRs by repo
     authored_by_repo: dict[str, list] = defaultdict(list)
     reviewed_by_repo: dict[str, list] = defaultdict(list)
     waiting_by_repo: dict[str, list] = defaultdict(list)
 
-    for pr in report.authored_prs:
+    for pr in authored_prs:
         authored_by_repo[pr.repo].append(pr)
-    for pr in report.reviewed_prs:
+    for pr in reviewed_prs:
         reviewed_by_repo[pr.repo].append(pr)
-    for pr in report.waiting_prs:
+    for pr in waiting_prs:
         waiting_by_repo[pr.repo].append(pr)
 
     all_repos = sorted(
@@ -204,11 +224,12 @@ def _make_waiting_item(pr) -> ContentItem:
 
 def _regroup_by_contribution(report: ReportData) -> list[RepoContent]:
     """Group by contribution type, then by project within each type."""
+    authored_prs, reviewed_prs, waiting_prs = _dedup_pr_lists(report)
     result: list[RepoContent] = []
 
     # Authored / Contributed
     authored_by_repo: dict[str, list[ContentItem]] = defaultdict(list)
-    for pr in report.authored_prs:
+    for pr in authored_prs:
         authored_by_repo[pr.repo].append(_make_authored_item(pr))
     if authored_by_repo:
         blocks = [
@@ -219,7 +240,7 @@ def _regroup_by_contribution(report: ReportData) -> list[RepoContent]:
 
     # Reviewed
     reviewed_by_repo: dict[str, list[ContentItem]] = defaultdict(list)
-    for pr in report.reviewed_prs:
+    for pr in reviewed_prs:
         reviewed_by_repo[pr.repo].append(_make_reviewed_item(pr))
     if reviewed_by_repo:
         blocks = [
@@ -230,7 +251,7 @@ def _regroup_by_contribution(report: ReportData) -> list[RepoContent]:
 
     # Waiting for Review
     waiting_by_repo: dict[str, list[ContentItem]] = defaultdict(list)
-    for pr in report.waiting_prs:
+    for pr in waiting_prs:
         waiting_by_repo[pr.repo].append(_make_waiting_item(pr))
     if waiting_by_repo:
         blocks = [
@@ -244,16 +265,18 @@ def _regroup_by_contribution(report: ReportData) -> list[RepoContent]:
 
 def _regroup_by_project(report: ReportData) -> list[RepoContent]:
     """Group by project, then by status within each project."""
+    authored_prs, reviewed_prs, waiting_prs = _dedup_pr_lists(report)
+
     # Collect all PRs by (repo, status)
     repo_status: dict[str, dict[str, list[ContentItem]]] = defaultdict(lambda: defaultdict(list))
 
-    for pr in report.authored_prs:
+    for pr in authored_prs:
         repo_status[pr.repo][pr.status].append(_make_authored_item(pr))
 
-    for pr in report.reviewed_prs:
+    for pr in reviewed_prs:
         repo_status[pr.repo][pr.status].append(_make_reviewed_item(pr))
 
-    for pr in report.waiting_prs:
+    for pr in waiting_prs:
         repo_status[pr.repo]["Waiting for Review"].append(_make_waiting_item(pr))
 
     result: list[RepoContent] = []
@@ -272,21 +295,23 @@ def _regroup_by_project(report: ReportData) -> list[RepoContent]:
 
 def _regroup_by_status(report: ReportData) -> list[RepoContent]:
     """Group by status, then by project within each status."""
+    authored_prs, reviewed_prs, waiting_prs = _dedup_pr_lists(report)
+
     # Collect all PRs by (status, repo)
     status_repo: dict[str, dict[str, list[ContentItem]]] = defaultdict(lambda: defaultdict(list))
 
-    for pr in report.authored_prs:
+    for pr in authored_prs:
         item = _make_authored_item(pr)
         # Clear status on item since the parent group IS the status
         item.status = ""
         status_repo[pr.status][pr.repo].append(item)
 
-    for pr in report.reviewed_prs:
+    for pr in reviewed_prs:
         item = _make_reviewed_item(pr)
         item.status = ""
         status_repo[pr.status][pr.repo].append(item)
 
-    for pr in report.waiting_prs:
+    for pr in waiting_prs:
         status_repo["Waiting for Review"][pr.repo].append(_make_waiting_item(pr))
 
     result: list[RepoContent] = []
@@ -617,9 +642,10 @@ def _build_repos_data(report: ReportData) -> dict[str, dict[str, list[dict]]]:
         ``{repo: {authored: [...], contributed: [...], reviewed: [...], waiting_for_review: [...]}}``
         Only non-empty categories are included per repo.
     """
+    authored_prs, reviewed_prs, waiting_prs = _dedup_pr_lists(report)
     repos: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
 
-    for pr in report.authored_prs:
+    for pr in authored_prs:
         category = "contributed" if pr.contributed else "authored"
         entry: dict = {
             "number": pr.number,
@@ -634,7 +660,7 @@ def _build_repos_data(report: ReportData) -> dict[str, dict[str, list[dict]]]:
             entry["changed_files"] = pr.changed_files
         repos[pr.repo][category].append(entry)
 
-    for pr in report.reviewed_prs:
+    for pr in reviewed_prs:
         entry = {
             "number": pr.number,
             "title": pr.title,
@@ -646,7 +672,7 @@ def _build_repos_data(report: ReportData) -> dict[str, dict[str, list[dict]]]:
             entry["changed_files"] = pr.changed_files
         repos[pr.repo]["reviewed"].append(entry)
 
-    for pr in report.waiting_prs:
+    for pr in waiting_prs:
         repos[pr.repo]["waiting_for_review"].append({
             "number": pr.number,
             "title": pr.title,
