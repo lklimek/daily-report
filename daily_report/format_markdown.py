@@ -33,20 +33,19 @@ def format_markdown(report: ReportData, group_by: str = "project") -> str:
                 lines.append(f"## {repo.repo_name}")
             lines.append("")
             for block in repo.blocks:
-                # Block heading as H3; backtick-wrap repo names (org/repo) only
-                if "/" in block.heading:
-                    lines.append(f"### `{block.heading}`")
-                else:
-                    lines.append(f"### {block.heading}")
-                lines.append("")
-                # Determine repo name for PR links
+                # Determine repo name for PR links and label prefix
                 if group_by == "project":
                     link_repo = repo.repo_name
+                    label = f"**{block.heading}**"
                 else:
                     link_repo = block.heading
-                # Items as bullets
+                    label = f"`{block.heading}`"
+                # Items as bullets with inline block label
+                skip_status = {repo.repo_name, block.heading}
                 for item in block.items:
-                    lines.append(f"- {_render_item(item, link_repo)}")
+                    lines.append(
+                        f"- {label}: {_render_item(item, link_repo, skip_status)}"
+                    )
             lines.append("")
     else:
         lines.append("_No PR activity found._")
@@ -73,7 +72,9 @@ def _pr_link(repo: str, number: int) -> str:
     return f"[#{number}](https://github.com/{repo}/pull/{number})"
 
 
-def _render_item(item: ContentItem, repo: str) -> str:
+def _render_item(
+    item: ContentItem, repo: str, skip_status: set[str] | None = None,
+) -> str:
     """Render a ContentItem as Markdown text."""
     text = item.title
 
@@ -87,7 +88,7 @@ def _render_item(item: ContentItem, repo: str) -> str:
     if item.author:
         text += f" ({item.author})"
 
-    if item.status:
+    if item.status and item.status not in (skip_status or set()):
         text += f" \u2014 **{item.status}**"
 
     if item.status in ("Open", "Draft") and (item.additions or item.deletions):

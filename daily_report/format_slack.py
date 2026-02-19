@@ -157,15 +157,16 @@ def _content_blocks(repo: RepoContent, group_by: str = "project") -> list[dict]:
         "text": {"type": "mrkdwn", "text": header_text},
     })
 
-    # Build all blocks as a single mrkdwn section with nested bullets
+    # Build all blocks as a single mrkdwn section with inline labels
     content_lines: list[str] = []
     for block in repo.blocks:
         if group_by == "project":
-            content_lines.append(f"\u2022 *{block.heading}*")
+            label = f"*{block.heading}*"
         else:
-            content_lines.append(f"\u2022 *`{block.heading}`*")
+            label = f"*`{block.heading}`*"
+        skip_status = {repo.repo_name, block.heading}
         for item in block.items:
-            content_lines.append(f"    {_render_item(item)}")
+            content_lines.append(f"\u2022 {label}: {_render_item(item, skip_status)}")
     if content_lines:
         text = _truncate_text("\n".join(content_lines))
         blocks.append({
@@ -199,7 +200,7 @@ def _summary_blocks(report: ReportData) -> list[dict]:
     }]
 
 
-def _render_item(item: ContentItem) -> str:
+def _render_item(item: ContentItem, skip_status: set[str] | None = None) -> str:
     """Render a ContentItem as Slack mrkdwn bullet text."""
     text = item.title
 
@@ -213,7 +214,7 @@ def _render_item(item: ContentItem) -> str:
     if item.author:
         text += f" ({item.author})"
 
-    if item.status:
+    if item.status and item.status not in (skip_status or set()):
         text += f" \u2014 *{item.status}*"
 
     if item.status in ("Open", "Draft") and (item.additions or item.deletions):
@@ -226,7 +227,7 @@ def _render_item(item: ContentItem) -> str:
     if item.days_waiting:
         text += f" \u2014 {item.days_waiting} days"
 
-    return f"\u2022 {text}"
+    return text
 
 
 def _truncate_text(text: str, max_len: int = 2900) -> str:

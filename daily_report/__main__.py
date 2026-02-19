@@ -308,6 +308,45 @@ def _get_reviewer_assigned_date(pr_node, reviewers):
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_pr_details_with_fallback(
+    batch: list[tuple[str, str, int]],
+) -> dict[tuple[str, str, int], dict]:
+    """Fetch PR details for a batch, falling back to individual queries on failure.
+
+    When a batch query fails (e.g. one PR in the batch doesn't exist),
+    retries each PR individually so only truly unresolvable PRs are lost.
+    """
+    try:
+        query = build_pr_details_query(batch)
+        data = graphql_with_retry(query)
+        return parse_pr_details_response(data, batch)
+    except RuntimeError as e:
+        print(
+            f"Warning: batch PR details fetch failed ({len(batch)} PRs), "
+            f"retrying individually: {e}",
+            file=sys.stderr,
+        )
+        results: dict[tuple[str, str, int], dict] = {}
+        for key in batch:
+            try:
+                query = build_pr_details_query([key])
+                data = graphql_with_retry(query)
+                parsed = parse_pr_details_response(data, [key])
+                results.update(parsed)
+            except RuntimeError as ind_e:
+                pr_org, repo_name, pr_number = key
+                print(
+                    f"Warning: failed to fetch {pr_org}/{repo_name}#{pr_number}: "
+                    f"{ind_e}",
+                    file=sys.stderr,
+                )
+        return results
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -616,20 +655,14 @@ def main():
     # -----------------------------------------------------------------------
     all_pr_keys = set(authored_pr_keys.keys()) | reviewed_pr_keys
 
-    # Batch fetch PR details
+    # Batch fetch PR details (with individual fallback on batch failure)
     pr_details: dict[tuple[str, str, int], dict] = {}
     if all_pr_keys:
         details_list = list(all_pr_keys)
         batch_size = 20
         for i in range(0, len(details_list), batch_size):
             batch = details_list[i:i + batch_size]
-            try:
-                query = build_pr_details_query(batch)
-                data = graphql_with_retry(query)
-                parsed = parse_pr_details_response(data, batch)
-                pr_details.update(parsed)
-            except RuntimeError as e:
-                print(f"Warning: PR details fetch failed: {e}", file=sys.stderr)
+            pr_details.update(_fetch_pr_details_with_fallback(batch))
 
     # Classify authored vs contributed based on PR author
     for key in list(authored_pr_keys.keys()):

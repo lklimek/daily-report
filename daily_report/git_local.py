@@ -113,6 +113,7 @@ def discover_repos(repos_dir: str, target_org: str | None = None) -> list[RepoIn
         return []
 
     results: list[RepoInfo] = []
+    seen: set[tuple[str, str]] = set()  # (org_lower, name_lower) for dedup
     target_org_lower = target_org.lower() if target_org else None
 
     try:
@@ -149,6 +150,15 @@ def discover_repos(repos_dir: str, target_org: str | None = None) -> list[RepoIn
 
         org, name = parsed
         if target_org_lower is None or org.lower() == target_org_lower:
+            dedup_key = (org.lower(), name.lower())
+            if dedup_key in seen:
+                print(
+                    f"Skipping duplicate checkout: {entry} "
+                    f"(already have {org}/{name})",
+                    file=sys.stderr,
+                )
+                continue
+            seen.add(dedup_key)
             results.append(RepoInfo(path=real_path, org=org, name=name))
 
     return results

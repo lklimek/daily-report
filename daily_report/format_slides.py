@@ -62,20 +62,13 @@ def _add_content_slide(prs: Presentation, repo: RepoContent) -> None:
     first_paragraph = True
 
     for block in repo.blocks:
-        # Block heading
-        p = tf.paragraphs[0] if first_paragraph else tf.add_paragraph()
-        first_paragraph = False
-        p.text = block.heading
-        p.level = 0
-        run = p.runs[0]
-        run.font.bold = True
-        run.font.size = Pt(14)
-
-        # Block items
+        # Block items with inline heading label
+        skip_status = {repo.repo_name, block.heading}
         for item in block.items:
-            p = tf.add_paragraph()
-            p.text = _render_item(item)
-            p.level = 1
+            p = tf.paragraphs[0] if first_paragraph else tf.add_paragraph()
+            first_paragraph = False
+            p.text = f"{block.heading}: {_render_item(item, skip_status)}"
+            p.level = 0
             p.runs[0].font.size = Pt(12)
 
 
@@ -109,7 +102,7 @@ def _add_summary_slide(prs: Presentation, report: ReportData) -> None:
         p.runs[0].font.size = Pt(14)
 
 
-def _render_item(item: ContentItem) -> str:
+def _render_item(item: ContentItem, skip_status: set[str] | None = None) -> str:
     """Render a ContentItem as plain text for slides."""
     text = item.title
 
@@ -123,7 +116,7 @@ def _render_item(item: ContentItem) -> str:
     if item.author:
         text += f" ({item.author})"
 
-    if item.status:
+    if item.status and item.status not in (skip_status or set()):
         text += f" -- {item.status}"
 
     if item.status in ("Open", "Draft") and (item.additions or item.deletions):

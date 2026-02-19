@@ -1,5 +1,6 @@
 """Unit tests for --group-by feature: regroup_content(), and group_by
 parameter propagation through Markdown, Slides, and Slack formatters.
+Also includes discover_repos dedup and batch fallback tests.
 
 Run with: python3 -m pytest tests/test_group_by.py -v
 """
@@ -7,6 +8,7 @@ Run with: python3 -m pytest tests/test_group_by.py -v
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pytest
 from pptx import Presentation
@@ -15,6 +17,7 @@ from daily_report.content import regroup_content
 from daily_report.format_markdown import format_markdown
 from daily_report.format_slides import format_slides
 from daily_report.format_slack import format_slack
+from daily_report.git_local import discover_repos, RepoInfo
 from daily_report.report_data import (
     AuthoredPR,
     ContentBlock,
@@ -313,10 +316,11 @@ class TestFormatMarkdownProject:
     def test_header_has_backticks(self):
         assert "## `org/alpha`" in self.md
 
-    def test_block_heading_no_backticks(self):
-        assert "### Open" in self.md
-        # Should NOT have backticks around status heading in project mode
-        assert "### `Open`" not in self.md
+    def test_block_heading_inline_label(self):
+        # Block heading inlined as bold label on each bullet
+        assert "**Open**:" in self.md
+        # No H3 headings
+        assert "###" not in self.md
 
     def test_pr_link_uses_repo_name(self):
         assert "https://github.com/org/alpha/pull/10" in self.md
@@ -334,8 +338,10 @@ class TestFormatMarkdownStatus:
         assert "## Open" in self.md
         assert "## `Open`" not in self.md
 
-    def test_block_heading_has_backticks(self):
-        assert "### `org/alpha`" in self.md
+    def test_block_heading_inline_label(self):
+        # Block heading (repo name) inlined as backtick label on each bullet
+        assert "`org/alpha`:" in self.md
+        assert "###" not in self.md
 
 
 class TestFormatMarkdownContribution:
@@ -350,8 +356,10 @@ class TestFormatMarkdownContribution:
         assert "## Authored / Contributed" in self.md
         assert "## `Authored" not in self.md
 
-    def test_block_heading_has_backticks(self):
-        assert "### `org/alpha`" in self.md
+    def test_block_heading_inline_label(self):
+        # Block heading (repo name) inlined as backtick label on each bullet
+        assert "`org/alpha`:" in self.md
+        assert "###" not in self.md
 
     def test_pr_link_uses_block_heading(self):
         # In contribution mode, block.heading is the project name
@@ -489,3 +497,185 @@ class TestCLIGroupBy:
         )
         assert result.returncode != 0
         assert "invalid choice" in result.stderr
+
+
+# ===========================================================================
+# 6. discover_repos deduplication tests
+# ===========================================================================
+
+
+class TestDiscoverReposDedup:
+    """Test that discover_repos skips duplicate repos (same org/name)."""
+
+    def _setup_dirs(self, tmp_path, entries):
+        """Create fake repo dirs with .git and mock remote URLs.
+
+        entries: list of (dirname, remote_url)
+        """
+        for dirname, _ in entries:
+            repo_dir = tmp_path / dirname
+            repo_dir.mkdir()
+            (repo_dir / ".git").mkdir()
+
+        url_map = {}
+        for dirname, url in entries:
+            real = str((tmp_path / dirname).resolve())
+            url_map[real] = url
+
+        def fake_get_remote_url(path):
+            return url_map.get(path)
+
+        return fake_get_remote_url
+
+    @patch("daily_report.git_local._get_remote_url")
+    def test_keeps_first_alphabetically(self, mock_remote, tmp_path):
+        entries = [
+            ("dash-evo-tool", "git@github.com:dashpay/dash-evo-tool.git"),
+            ("dash-evo-tool-2", "git@github.com:dashpay/dash-evo-tool.git"),
+        ]
+        mock_remote.side_effect = self._setup_dirs(tmp_path, entries)
+
+        repos = discover_repos(str(tmp_path), "dashpay")
+        assert len(repos) == 1
+        assert repos[0].name == "dash-evo-tool"
+        assert "dash-evo-tool-2" not in repos[0].path
+
+    @patch("daily_report.git_local._get_remote_url")
+    def test_different_repos_not_deduped(self, mock_remote, tmp_path):
+        entries = [
+            ("platform", "git@github.com:dashpay/platform.git"),
+            ("dash-evo-tool", "git@github.com:dashpay/dash-evo-tool.git"),
+        ]
+        mock_remote.side_effect = self._setup_dirs(tmp_path, entries)
+
+        repos = discover_repos(str(tmp_path), "dashpay")
+        assert len(repos) == 2
+        names = {r.name for r in repos}
+        assert names == {"platform", "dash-evo-tool"}
+
+    @patch("daily_report.git_local._get_remote_url")
+    def test_case_insensitive_dedup(self, mock_remote, tmp_path):
+        entries = [
+            ("MyRepo", "git@github.com:Org/MyRepo.git"),
+            ("myrepo-fork", "git@github.com:org/myrepo.git"),
+        ]
+        mock_remote.side_effect = self._setup_dirs(tmp_path, entries)
+
+        repos = discover_repos(str(tmp_path))
+        assert len(repos) == 1
+
+    @patch("daily_report.git_local._get_remote_url")
+    def test_three_clones_same_repo(self, mock_remote, tmp_path):
+        entries = [
+            ("repo-a", "git@github.com:org/repo.git"),
+            ("repo-b", "git@github.com:org/repo.git"),
+            ("repo-c", "git@github.com:org/repo.git"),
+        ]
+        mock_remote.side_effect = self._setup_dirs(tmp_path, entries)
+
+        repos = discover_repos(str(tmp_path))
+        assert len(repos) == 1
+        # First alphabetically is repo-a
+        assert "repo-a" in repos[0].path
+
+
+# ===========================================================================
+# 7. Batch PR details fallback tests
+# ===========================================================================
+
+
+class TestFetchPrDetailsWithFallback:
+    """Test _fetch_pr_details_with_fallback individual retry logic."""
+
+    def test_batch_success_no_fallback(self):
+        from daily_report.__main__ import _fetch_pr_details_with_fallback
+
+        batch = [("org", "repo", 1), ("org", "repo", 2)]
+        mock_data = {
+            ("org", "repo", 1): {"title": "PR 1", "state": "OPEN"},
+            ("org", "repo", 2): {"title": "PR 2", "state": "MERGED"},
+        }
+
+        with patch("daily_report.__main__.build_pr_details_query") as mock_build, \
+             patch("daily_report.__main__.graphql_with_retry") as mock_gql, \
+             patch("daily_report.__main__.parse_pr_details_response") as mock_parse:
+            mock_parse.return_value = mock_data
+            result = _fetch_pr_details_with_fallback(batch)
+
+        assert result == mock_data
+        # Should only be called once (batch), not individually
+        assert mock_build.call_count == 1
+
+    def test_batch_failure_retries_individually(self):
+        from daily_report.__main__ import _fetch_pr_details_with_fallback
+
+        batch = [("org", "repo", 1), ("org", "repo", 2), ("org", "repo", 3)]
+
+        call_count = {"build": 0}
+
+        def mock_build(keys):
+            call_count["build"] += 1
+            return f"query_{call_count['build']}"
+
+        def mock_gql(query):
+            if query == "query_1":
+                # First call (batch) fails
+                raise RuntimeError("batch failed")
+            return {"data": query}
+
+        def mock_parse(data, keys):
+            key = keys[0]
+            if key == ("org", "repo", 2):
+                # PR 2 also fails individually
+                raise RuntimeError("PR not found")
+            return {key: {"title": f"PR {key[2]}"}}
+
+        with patch("daily_report.__main__.build_pr_details_query", side_effect=mock_build), \
+             patch("daily_report.__main__.graphql_with_retry", side_effect=mock_gql), \
+             patch("daily_report.__main__.parse_pr_details_response", side_effect=mock_parse):
+            result = _fetch_pr_details_with_fallback(batch)
+
+        # PR 1 and PR 3 should succeed, PR 2 should be missing
+        assert ("org", "repo", 1) in result
+        assert ("org", "repo", 3) in result
+        assert ("org", "repo", 2) not in result
+        # 1 batch call + 3 individual calls = 4 build calls
+        assert call_count["build"] == 4
+
+    def test_batch_failure_all_individual_fail(self):
+        from daily_report.__main__ import _fetch_pr_details_with_fallback
+
+        batch = [("org", "repo", 1)]
+
+        with patch("daily_report.__main__.build_pr_details_query") as mock_build, \
+             patch("daily_report.__main__.graphql_with_retry", side_effect=RuntimeError("fail")), \
+             patch("daily_report.__main__.parse_pr_details_response"):
+            result = _fetch_pr_details_with_fallback(batch)
+
+        assert result == {}
+
+    def test_batch_failure_some_succeed(self):
+        from daily_report.__main__ import _fetch_pr_details_with_fallback
+
+        batch = [("org", "repo", 10), ("org", "repo", 560)]
+        first_call = [True]
+
+        def mock_gql(query):
+            if first_call[0]:
+                first_call[0] = False
+                raise RuntimeError("Could not resolve to a Repository")
+            return {"data": "ok"}
+
+        def mock_parse(data, keys):
+            key = keys[0]
+            if key[2] == 560:
+                raise RuntimeError("PR 560 not found")
+            return {key: {"title": "Good PR", "state": "OPEN"}}
+
+        with patch("daily_report.__main__.build_pr_details_query", return_value="q"), \
+             patch("daily_report.__main__.graphql_with_retry", side_effect=mock_gql), \
+             patch("daily_report.__main__.parse_pr_details_response", side_effect=mock_parse):
+            result = _fetch_pr_details_with_fallback(batch)
+
+        assert ("org", "repo", 10) in result
+        assert ("org", "repo", 560) not in result
