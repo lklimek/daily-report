@@ -19,6 +19,7 @@ from daily_report.content import (
     _build_repos_data,
     _call_with_retry,
     _dedup_pr_lists,
+    _load_prompt,
     _load_schema,
     _parse_and_validate,
     _parse_response,
@@ -41,11 +42,13 @@ from daily_report.report_data import (
 
 
 @pytest.fixture(autouse=True)
-def _clear_schema_cache():
-    """Reset the schema cache before each test."""
+def _clear_caches():
+    """Reset the schema and prompt caches before each test."""
     _content_module._schema_cache = None
+    _content_module._prompt_cache.clear()
     yield
     _content_module._schema_cache = None
+    _content_module._prompt_cache.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +784,35 @@ class TestBuildReposData:
             "number": 3,
             "title": "Waiting",
         }
+
+
+# ---------------------------------------------------------------------------
+# _load_prompt tests
+# ---------------------------------------------------------------------------
+
+class TestLoadPrompt:
+    """Tests for _load_prompt."""
+
+    def test_loads_summary_prompt(self):
+        text = _load_prompt("summary")
+        assert isinstance(text, str)
+        assert len(text) > 0
+        assert "authored" in text.lower()
+
+    def test_loads_consolidation_prompt(self):
+        text = _load_prompt("consolidation")
+        assert isinstance(text, str)
+        assert len(text) > 0
+        assert "subgroup" in text.lower()
+
+    def test_caching_returns_same_string(self):
+        t1 = _load_prompt("summary")
+        t2 = _load_prompt("summary")
+        assert t1 is t2
+
+    def test_missing_prompt_raises_file_not_found(self):
+        with pytest.raises(FileNotFoundError):
+            _load_prompt("nonexistent")
 
 
 # ---------------------------------------------------------------------------

@@ -33,48 +33,29 @@ from daily_report.report_data import (
     WaitingPR,
 )
 
-_DEFAULT_SUMMARY_PROMPT = (
-    "You are given a list of GitHub pull requests grouped by repository, "
-    "including PR descriptions, changed files, and diff stats. "
-    "PRs are categorized as 'authored' (user's own work), 'contributed' "
-    "(commits on someone else's PR), 'reviewed' (someone else's PR that "
-    "the user only reviewed), or 'waiting_for_review'. "
-    "Use all provided details to understand the substance of each PR. "
-    "If a PR description or changed-files list is missing or unclear, use the "
-    "repo name, PR title, and file paths to infer what the change does. "
-    "Write a single-sentence summary (max 200 characters) focusing on "
-    "what the user AUTHORED or CONTRIBUTED TO as their primary work. "
-    "You can skip items where contribution was very small."
-    "Focus on the high-level goals, motivations, and value delivered — not what "
-    "was changed, but WHY it matters and what problems were solved. "
-    "Reviewed PRs are NOT the user's work — only mention them briefly "
-    "if at all (e.g. 'also reviewed N PRs'). "
+_SUMMARY_FORMAT = (
+    "Max 200 characters. "
     "Return ONLY the summary text, nothing else — no quotes, no labels, no JSON."
 )
 
-_DEFAULT_PROMPT = (
-    "You are given a list of GitHub pull requests organized in a two-level "
-    "grouped structure. The outer keys are groups and the inner keys are "
-    "subgroups. PRs may be categorized as 'authored' (user's own work), "
-    "'contributed' (commits on someone else's PR), 'reviewed' (someone "
-    "else's PR that the user only reviewed), or 'waiting_for_review'. "
-    "Use all provided details — descriptions, file paths, and diff sizes — to "
-    "understand the substance and scope of each PR. "
-    "If a PR description is missing or vague, infer intent from the file paths, "
-    "diff stats, and PR title. "
-    "For each subgroup, summarize the work into 2-5 concise bullet points. "
-    "Do NOT just repeat PR titles — explain the GOALS, MOTIVATIONS, and VALUE "
-    "of each piece of work. Why was this PR needed? What problem does it solve? "
-    "What value does it deliver to users, developers, or the system? "
-    "Focus on authored and contributed PRs as the user's primary work. "
-    "Use correct grammar forms to distinguish between things that are done (merged), "
-    "and that are in progress."
-    "Reviewed PRs are NOT the user's own work — summarize them separately if included. "
+_CONSOLIDATION_FORMAT = (
     "Reference PR numbers. Return valid JSON only, no markdown fences, no explanation. "
     "Preserve the exact group and subgroup keys from the input in your output. "
     'Format: {"group": {"subgroup": [{"title": "summary line", "numbers": [1,2,3]}, ...]}, ...}. '
     "A JSON schema for the expected output will be provided alongside the data."
 )
+
+
+_prompt_cache: dict[str, str] = {}
+
+
+def _load_prompt(name: str) -> str:
+    """Load and cache a behavioral prompt from ``prompts/{name}.md``."""
+    if name not in _prompt_cache:
+        prompt_path = Path(__file__).parent / "prompts" / f"{name}.md"
+        with open(prompt_path) as f:
+            _prompt_cache[name] = f.read().strip()
+    return _prompt_cache[name]
 
 
 def _dedup_pr_lists(
@@ -403,7 +384,13 @@ def prepare_consolidated_content(
         return []
 
     schema = _load_schema()
-    system_prompt = prompt or _DEFAULT_PROMPT
+    if prompt:
+        system_prompt: str | list[dict] = prompt
+    else:
+        system_prompt = [
+            {"type": "text", "text": _load_prompt("consolidation")},
+            {"type": "text", "text": _CONSOLIDATION_FORMAT},
+        ]
 
     # Include schema in user message so the AI can self-validate
     user_message = (
@@ -440,7 +427,13 @@ def prepare_ai_summary(
     if not repos_data:
         return ""
 
-    system_prompt = prompt or _DEFAULT_SUMMARY_PROMPT
+    if prompt:
+        system_prompt: str | list[dict] = prompt
+    else:
+        system_prompt = [
+            {"type": "text", "text": _load_prompt("summary")},
+            {"type": "text", "text": _SUMMARY_FORMAT},
+        ]
     user_message = json.dumps(repos_data, indent=2)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -449,7 +442,7 @@ def prepare_ai_summary(
 
 
 def _call_via_sdk(
-    api_key: str, model: str, system_prompt: str, user_message: str,
+    api_key: str, model: str, system_prompt: str | list[dict], user_message: str,
 ) -> str:
     """Call Claude via the anthropic Python SDK (API key auth)."""
     import anthropic  # lazy import
@@ -474,7 +467,7 @@ def _call_via_sdk(
 
 
 def _call_via_sdk_agent(
-    model: str, system_prompt: str, user_message: str,
+    model: str, system_prompt: str | list[dict], user_message: str,
 ) -> str:
     """Call Claude via ``claude-agent-sdk`` (subscription / OAuth auth).
 
@@ -487,7 +480,11 @@ def _call_via_sdk_agent(
         query,
     )
 
-    full_prompt = f"{system_prompt}\n\n{user_message}"
+    if isinstance(system_prompt, list):
+        system_text = "\n\n".join(block["text"] for block in system_prompt)
+    else:
+        system_text = system_prompt
+    full_prompt = f"{system_text}\n\n{user_message}"
     options = ClaudeAgentOptions(
         model=model,
         max_turns=1,
@@ -527,7 +524,7 @@ def _load_schema() -> dict:
 
 
 def _call_backend(
-    api_key: str, model: str, system_prompt: str, user_message: str,
+    api_key: str, model: str, system_prompt: str | list[dict], user_message: str,
 ) -> str:
     """Call the AI backend (SDK or CLI) and return the raw text response."""
     if api_key:
@@ -592,7 +589,7 @@ def _parse_and_validate(text: str, schema: dict) -> list[RepoContent]:
 def _call_with_retry(
     api_key: str,
     model: str,
-    system_prompt: str,
+    system_prompt: str | list[dict],
     user_message: str,
     schema: dict,
 ) -> list[RepoContent]:
