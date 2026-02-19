@@ -53,16 +53,16 @@ _DEFAULT_SUMMARY_PROMPT = (
 )
 
 _DEFAULT_PROMPT = (
-    "You are given a list of GitHub pull requests grouped by repository, "
-    "including PR descriptions, changed files, and diff stats. "
-    "PRs are categorized as 'authored' (user's own work), 'contributed' "
-    "(commits on someone else's PR), 'reviewed' (someone else's PR that "
-    "the user only reviewed), or 'waiting_for_review'. "
+    "You are given a list of GitHub pull requests organized in a two-level "
+    "grouped structure. The outer keys are groups and the inner keys are "
+    "subgroups. PRs may be categorized as 'authored' (user's own work), "
+    "'contributed' (commits on someone else's PR), 'reviewed' (someone "
+    "else's PR that the user only reviewed), or 'waiting_for_review'. "
     "Use all provided details — descriptions, file paths, and diff sizes — to "
     "understand the substance and scope of each PR. "
     "If a PR description is missing or vague, infer intent from the file paths, "
     "diff stats, and PR title. "
-    "For each repository, summarize the work into 2-5 concise bullet points. "
+    "For each subgroup, summarize the work into 2-5 concise bullet points. "
     "Do NOT just repeat PR titles — explain the GOALS, MOTIVATIONS, and VALUE "
     "of each piece of work. Why was this PR needed? What problem does it solve? "
     "What value does it deliver to users, developers, or the system? "
@@ -71,7 +71,8 @@ _DEFAULT_PROMPT = (
     "and that are in progress."
     "Reviewed PRs are NOT the user's own work — summarize them separately if included. "
     "Reference PR numbers. Return valid JSON only, no markdown fences, no explanation. "
-    'Format: {"repo_name": [{"title": "summary line", "numbers": [1,2,3]}, ...], ...}. '
+    "Preserve the exact group and subgroup keys from the input in your output. "
+    'Format: {"group": {"subgroup": [{"title": "summary line", "numbers": [1,2,3]}, ...]}, ...}. '
     "A JSON schema for the expected output will be provided alongside the data."
 )
 
@@ -334,10 +335,46 @@ def _regroup_by_status(report: ReportData) -> list[RepoContent]:
     return result
 
 
+def _serialize_grouped_content(content: list[RepoContent]) -> dict:
+    """Convert RepoContent list to a nested dict for AI input.
+
+    Each RepoContent.repo_name → top key, each ContentBlock.heading → sub-key,
+    each ContentItem → serialized dict with non-empty fields only.
+    """
+    result: dict = {}
+    for rc in content:
+        group: dict = {}
+        for block in rc.blocks:
+            items: list[dict] = []
+            for item in block.items:
+                entry: dict = {"title": item.title}
+                if item.numbers:
+                    entry["numbers"] = item.numbers
+                if item.status:
+                    entry["status"] = item.status
+                if item.additions:
+                    entry["additions"] = item.additions
+                if item.deletions:
+                    entry["deletions"] = item.deletions
+                if item.author:
+                    entry["author"] = item.author
+                if item.reviewers:
+                    entry["reviewers"] = item.reviewers
+                if item.days_waiting:
+                    entry["days_waiting"] = item.days_waiting
+                items.append(entry)
+            if items:
+                group[block.heading] = items
+        if group:
+            result[rc.repo_name] = group
+    return result
+
+
 def prepare_consolidated_content(
     report: ReportData,
     model: str = "claude-haiku-4-5-20251001",
     prompt: str | None = None,
+    group_by: str = "contribution",
 ) -> list[RepoContent]:
     """Build AI-consolidated RepoContent list using the Claude API.
 
@@ -360,8 +397,9 @@ def prepare_consolidated_content(
     Raises:
         RuntimeError: If the API call fails or no auth method is available.
     """
-    repos_data = _build_repos_data(report)
-    if not repos_data:
+    grouped = regroup_content(report, group_by)
+    grouped_data = _serialize_grouped_content(grouped)
+    if not grouped_data:
         return []
 
     schema = _load_schema()
@@ -369,7 +407,7 @@ def prepare_consolidated_content(
 
     # Include schema in user message so the AI can self-validate
     user_message = (
-        json.dumps(repos_data, indent=2)
+        json.dumps(grouped_data, indent=2)
         + "\n\n---\nExpected JSON schema for your response:\n"
         + json.dumps(schema, indent=2)
     )
@@ -521,26 +559,32 @@ def _parse_and_validate(text: str, schema: dict) -> list[RepoContent]:
     except jsonschema.ValidationError as e:
         raise RuntimeError(f"Response failed schema validation: {e.message}") from e
 
-    # Build RepoContent list
+    # Build RepoContent list from nested {group: {subgroup: [items]}}
     result: list[RepoContent] = []
-    for repo_name in sorted(parsed):
-        items_data = parsed[repo_name]
-        if not isinstance(items_data, list):
+    for group_name in sorted(parsed):
+        subgroups = parsed[group_name]
+        if not isinstance(subgroups, dict):
             continue
-        items: list[ContentItem] = []
-        for item in items_data:
-            if not isinstance(item, dict):
+        blocks: list[ContentBlock] = []
+        for subgroup_name in subgroups:
+            items_data = subgroups[subgroup_name]
+            if not isinstance(items_data, list):
                 continue
-            title = str(item.get("title", ""))[:500]
-            numbers = item.get("numbers", [])
-            if not isinstance(numbers, list):
-                numbers = []
-            numbers = [n for n in numbers if isinstance(n, int)]
-            if title:
-                items.append(ContentItem(title=title, numbers=numbers))
-        if items:
-            block = ContentBlock(heading="Summary", items=items)
-            result.append(RepoContent(repo_name=repo_name, blocks=[block]))
+            items: list[ContentItem] = []
+            for item in items_data:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title", ""))[:500]
+                numbers = item.get("numbers", [])
+                if not isinstance(numbers, list):
+                    numbers = []
+                numbers = [n for n in numbers if isinstance(n, int)]
+                if title:
+                    items.append(ContentItem(title=title, numbers=numbers))
+            if items:
+                blocks.append(ContentBlock(heading=subgroup_name, items=items))
+        if blocks:
+            result.append(RepoContent(repo_name=group_name, blocks=blocks))
 
     return result
 
@@ -619,24 +663,30 @@ def _parse_response(text: str) -> list[RepoContent]:
         raise RuntimeError("Claude response is not a JSON object")
 
     result: list[RepoContent] = []
-    for repo_name in sorted(parsed):
-        items_data = parsed[repo_name]
-        if not isinstance(items_data, list):
+    for group_name in sorted(parsed):
+        subgroups = parsed[group_name]
+        if not isinstance(subgroups, dict):
             continue
-        items: list[ContentItem] = []
-        for item in items_data:
-            if not isinstance(item, dict):
+        blocks: list[ContentBlock] = []
+        for subgroup_name in subgroups:
+            items_data = subgroups[subgroup_name]
+            if not isinstance(items_data, list):
                 continue
-            title = str(item.get("title", ""))[:500]
-            numbers = item.get("numbers", [])
-            if not isinstance(numbers, list):
-                numbers = []
-            numbers = [n for n in numbers if isinstance(n, int)]
-            if title:
-                items.append(ContentItem(title=title, numbers=numbers))
-        if items:
-            block = ContentBlock(heading="Summary", items=items)
-            result.append(RepoContent(repo_name=repo_name, blocks=[block]))
+            items: list[ContentItem] = []
+            for item in items_data:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title", ""))[:500]
+                numbers = item.get("numbers", [])
+                if not isinstance(numbers, list):
+                    numbers = []
+                numbers = [n for n in numbers if isinstance(n, int)]
+                if title:
+                    items.append(ContentItem(title=title, numbers=numbers))
+            if items:
+                blocks.append(ContentBlock(heading=subgroup_name, items=items))
+        if blocks:
+            result.append(RepoContent(repo_name=group_name, blocks=blocks))
 
     return result
 

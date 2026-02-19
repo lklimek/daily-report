@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import daily_report.content as _content_module
 from daily_report.content import (
     _build_repos_data,
     _call_with_retry,
@@ -21,9 +22,11 @@ from daily_report.content import (
     _load_schema,
     _parse_and_validate,
     _parse_response,
+    _serialize_grouped_content,
     prepare_ai_summary,
     prepare_consolidated_content,
     prepare_default_content,
+    regroup_content,
 )
 from daily_report.report_data import (
     AuthoredPR,
@@ -35,6 +38,14 @@ from daily_report.report_data import (
     SummaryStats,
     WaitingPR,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_schema_cache():
+    """Reset the schema cache before each test."""
+    _content_module._schema_cache = None
+    yield
+    _content_module._schema_cache = None
 
 
 # ---------------------------------------------------------------------------
@@ -317,23 +328,23 @@ class TestParseResponse:
 
     def test_valid_json_produces_repo_contents(self):
         data = {
-            "org/alpha": [
-                {"title": "Auth improvements", "numbers": [10, 11]},
-            ],
-            "org/beta": [
-                {"title": "Bug fixes", "numbers": [20]},
-            ],
+            "org/alpha": {
+                "authored": [{"title": "Auth improvements", "numbers": [10, 11]}],
+            },
+            "org/beta": {
+                "reviewed": [{"title": "Bug fixes", "numbers": [20]}],
+            },
         }
         result = _parse_response(json.dumps(data))
         assert len(result) == 2
         assert result[0].repo_name == "org/alpha"
-        assert result[0].blocks[0].heading == "Summary"
+        assert result[0].blocks[0].heading == "authored"
         assert result[0].blocks[0].items[0].title == "Auth improvements"
         assert result[0].blocks[0].items[0].numbers == [10, 11]
         assert result[1].repo_name == "org/beta"
 
     def test_strips_markdown_code_fences(self):
-        data = {"org/repo": [{"title": "Summary", "numbers": [1]}]}
+        data = {"org/repo": {"Summary": [{"title": "Summary", "numbers": [1]}]}}
         wrapped = "```json\n" + json.dumps(data) + "\n```"
         result = _parse_response(wrapped)
         assert len(result) == 1
@@ -349,23 +360,36 @@ class TestParseResponse:
 
     def test_title_truncated_to_500_chars(self):
         long_title = "x" * 1000
-        data = {"org/repo": [{"title": long_title, "numbers": [1]}]}
+        data = {"org/repo": {"sub": [{"title": long_title, "numbers": [1]}]}}
         result = _parse_response(json.dumps(data))
         assert len(result[0].blocks[0].items[0].title) == 500
 
     def test_non_int_numbers_filtered_out(self):
-        data = {"org/repo": [{"title": "Test", "numbers": [1, "two", 3, None]}]}
+        data = {"org/repo": {"sub": [{"title": "Test", "numbers": [1, "two", 3, None]}]}}
         result = _parse_response(json.dumps(data))
         assert result[0].blocks[0].items[0].numbers == [1, 3]
 
-    def test_repos_sorted_alphabetically(self):
+    def test_groups_sorted_alphabetically(self):
         data = {
-            "org/zebra": [{"title": "Z", "numbers": []}],
-            "org/alpha": [{"title": "A", "numbers": []}],
+            "org/zebra": {"sub": [{"title": "Z", "numbers": []}]},
+            "org/alpha": {"sub": [{"title": "A", "numbers": []}]},
         }
         result = _parse_response(json.dumps(data))
         assert result[0].repo_name == "org/alpha"
         assert result[1].repo_name == "org/zebra"
+
+    def test_multiple_subgroups_produce_multiple_blocks(self):
+        data = {
+            "Authored / Contributed": {
+                "org/alpha": [{"title": "Feature A", "numbers": [1]}],
+                "org/beta": [{"title": "Feature B", "numbers": [2]}],
+            },
+        }
+        result = _parse_response(json.dumps(data))
+        assert len(result) == 1
+        assert len(result[0].blocks) == 2
+        assert result[0].blocks[0].heading == "org/alpha"
+        assert result[0].blocks[1].heading == "org/beta"
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +427,11 @@ class TestPrepareConsolidatedContentViaSDK:
 
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
     def test_uses_sdk_when_api_key_set(self):
-        response_data = {"org/alpha": [{"title": "Summary", "numbers": [10]}]}
+        response_data = {
+            "Authored / Contributed": {
+                "org/alpha": [{"title": "Summary", "numbers": [10]}],
+            },
+        }
         self._mock_anthropic.Anthropic.return_value.messages.create.return_value = (
             self._make_mock_response(json.dumps(response_data))
         )
@@ -425,6 +453,42 @@ class TestPrepareConsolidatedContentViaSDK:
         report = self._report_with_prs()
         with pytest.raises(RuntimeError, match="Claude API call failed"):
             prepare_consolidated_content(report)
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
+    def test_group_by_project_sends_project_grouped_data(self):
+        response_data = {
+            "org/alpha": {
+                "Open": [{"title": "Summary", "numbers": [10]}],
+            },
+        }
+        self._mock_anthropic.Anthropic.return_value.messages.create.return_value = (
+            self._make_mock_response(json.dumps(response_data))
+        )
+
+        report = self._report_with_prs()
+        result = prepare_consolidated_content(report, group_by="project")
+
+        assert len(result) == 1
+        assert result[0].repo_name == "org/alpha"
+        assert result[0].blocks[0].heading == "Open"
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
+    def test_group_by_status_sends_status_grouped_data(self):
+        response_data = {
+            "Open": {
+                "org/alpha": [{"title": "Summary", "numbers": [10]}],
+            },
+        }
+        self._mock_anthropic.Anthropic.return_value.messages.create.return_value = (
+            self._make_mock_response(json.dumps(response_data))
+        )
+
+        report = self._report_with_prs()
+        result = prepare_consolidated_content(report, group_by="status")
+
+        assert len(result) == 1
+        assert result[0].repo_name == "Open"
+        assert result[0].blocks[0].heading == "org/alpha"
 
     def test_empty_report_returns_empty_list(self):
         report = _make_report()
@@ -450,7 +514,11 @@ class TestPrepareConsolidatedContentViaSDKAgent:
     @patch("daily_report.content._call_via_sdk_agent")
     def test_uses_sdk_agent_when_no_api_key(self, mock_agent, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        response_data = {"org/alpha": [{"title": "Summary", "numbers": [10]}]}
+        response_data = {
+            "Authored / Contributed": {
+                "org/alpha": [{"title": "Summary", "numbers": [10]}],
+            },
+        }
         mock_agent.return_value = json.dumps(response_data)
 
         report = self._report_with_prs()
@@ -730,7 +798,10 @@ class TestLoadSchema:
         schema = _load_schema()
         assert schema["type"] == "object"
         assert "additionalProperties" in schema
-        items = schema["additionalProperties"]["items"]
+        inner = schema["additionalProperties"]
+        assert inner["type"] == "object"
+        assert "additionalProperties" in inner
+        items = inner["additionalProperties"]["items"]
         assert "title" in items["properties"]
         assert "numbers" in items["properties"]
 
@@ -751,10 +822,11 @@ class TestParseAndValidate:
         return _load_schema()
 
     def test_valid_json_returns_repo_contents(self):
-        data = {"org/repo": [{"title": "Summary", "numbers": [1]}]}
+        data = {"org/repo": {"Summary": [{"title": "Summary", "numbers": [1]}]}}
         result = _parse_and_validate(json.dumps(data), self._schema())
         assert len(result) == 1
         assert result[0].repo_name == "org/repo"
+        assert result[0].blocks[0].heading == "Summary"
         assert result[0].blocks[0].items[0].title == "Summary"
 
     def test_invalid_json_raises_runtime_error(self):
@@ -769,26 +841,26 @@ class TestParseAndValidate:
         """Response with wrong types should fail schema validation."""
         pytest.importorskip("jsonschema")
         # numbers should be array of ints, not a string
-        bad_data = {"org/repo": [{"title": "Summary", "numbers": "not-a-list"}]}
+        bad_data = {"org/repo": {"sub": [{"title": "Summary", "numbers": "not-a-list"}]}}
         with pytest.raises(RuntimeError, match="schema validation"):
             _parse_and_validate(json.dumps(bad_data), self._schema())
 
     def test_extra_properties_rejected_by_schema(self):
         """Items with extra properties should fail additionalProperties: false."""
         pytest.importorskip("jsonschema")
-        bad_data = {"org/repo": [{"title": "Summary", "numbers": [1], "extra": "bad"}]}
+        bad_data = {"org/repo": {"sub": [{"title": "Summary", "numbers": [1], "extra": "bad"}]}}
         with pytest.raises(RuntimeError, match="schema validation"):
             _parse_and_validate(json.dumps(bad_data), self._schema())
 
     def test_works_without_jsonschema_installed(self):
         """When jsonschema is not installed, validation is skipped gracefully."""
-        data = {"org/repo": [{"title": "Summary", "numbers": [1]}]}
+        data = {"org/repo": {"sub": [{"title": "Summary", "numbers": [1]}]}}
         with patch.dict(sys.modules, {"jsonschema": None}):
             result = _parse_and_validate(json.dumps(data), self._schema())
         assert len(result) == 1
 
     def test_fenced_json_extracted(self):
-        data = {"org/repo": [{"title": "Fenced", "numbers": [2]}]}
+        data = {"org/repo": {"sub": [{"title": "Fenced", "numbers": [2]}]}}
         wrapped = "Here is the JSON:\n```json\n" + json.dumps(data) + "\n```"
         result = _parse_and_validate(wrapped, self._schema())
         assert result[0].blocks[0].items[0].title == "Fenced"
@@ -806,7 +878,7 @@ class TestCallWithRetry:
 
     @patch("daily_report.content._call_backend")
     def test_success_on_first_call(self, mock_backend):
-        data = {"org/repo": [{"title": "Good", "numbers": [1]}]}
+        data = {"org/repo": {"Summary": [{"title": "Good", "numbers": [1]}]}}
         mock_backend.return_value = json.dumps(data)
 
         result = _call_with_retry("key", "model", "sys", "user", self._schema())
@@ -816,7 +888,7 @@ class TestCallWithRetry:
 
     @patch("daily_report.content._call_backend")
     def test_retry_on_first_failure(self, mock_backend):
-        good_data = {"org/repo": [{"title": "Fixed", "numbers": [1]}]}
+        good_data = {"org/repo": {"Summary": [{"title": "Fixed", "numbers": [1]}]}}
         mock_backend.side_effect = [
             "This is not valid JSON at all",  # first call fails
             json.dumps(good_data),             # retry succeeds
@@ -829,7 +901,7 @@ class TestCallWithRetry:
 
     @patch("daily_report.content._call_backend")
     def test_retry_includes_error_and_schema(self, mock_backend):
-        good_data = {"org/repo": [{"title": "OK", "numbers": [1]}]}
+        good_data = {"org/repo": {"Summary": [{"title": "OK", "numbers": [1]}]}}
         mock_backend.side_effect = [
             "bad response",
             json.dumps(good_data),
@@ -856,8 +928,8 @@ class TestCallWithRetry:
     def test_schema_validation_failure_triggers_retry(self, mock_backend):
         """Schema validation error (not just JSON parse) triggers retry."""
         pytest.importorskip("jsonschema")
-        bad_data = {"org/repo": [{"title": "X", "numbers": "not-a-list"}]}
-        good_data = {"org/repo": [{"title": "Fixed", "numbers": [1]}]}
+        bad_data = {"org/repo": {"sub": [{"title": "X", "numbers": "not-a-list"}]}}
+        good_data = {"org/repo": {"sub": [{"title": "Fixed", "numbers": [1]}]}}
         mock_backend.side_effect = [
             json.dumps(bad_data),
             json.dumps(good_data),
@@ -866,6 +938,126 @@ class TestCallWithRetry:
         result = _call_with_retry("key", "model", "sys", "user", self._schema())
         assert result[0].blocks[0].items[0].title == "Fixed"
         assert mock_backend.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# _serialize_grouped_content tests
+# ---------------------------------------------------------------------------
+
+class TestSerializeGroupedContent:
+    """Tests for _serialize_grouped_content."""
+
+    def test_empty_list_returns_empty_dict(self):
+        assert _serialize_grouped_content([]) == {}
+
+    def test_single_repo_single_block(self):
+        content = [
+            RepoContent(
+                repo_name="Authored / Contributed",
+                blocks=[
+                    ContentBlock(
+                        heading="org/repo",
+                        items=[
+                            ContentItem(title="Add login", numbers=[10],
+                                        status="Open", additions=50, deletions=10),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        result = _serialize_grouped_content(content)
+        assert "Authored / Contributed" in result
+        assert "org/repo" in result["Authored / Contributed"]
+        item = result["Authored / Contributed"]["org/repo"][0]
+        assert item["title"] == "Add login"
+        assert item["numbers"] == [10]
+        assert item["status"] == "Open"
+        assert item["additions"] == 50
+        assert item["deletions"] == 10
+
+    def test_empty_fields_omitted(self):
+        content = [
+            RepoContent(
+                repo_name="group",
+                blocks=[
+                    ContentBlock(
+                        heading="sub",
+                        items=[ContentItem(title="Basic PR", numbers=[1])],
+                    ),
+                ],
+            ),
+        ]
+        result = _serialize_grouped_content(content)
+        item = result["group"]["sub"][0]
+        assert "status" not in item
+        assert "additions" not in item
+        assert "author" not in item
+
+    def test_waiting_item_serializes_reviewers_and_days(self):
+        content = [
+            RepoContent(
+                repo_name="Waiting for Review",
+                blocks=[
+                    ContentBlock(
+                        heading="org/repo",
+                        items=[
+                            ContentItem(title="Waiting PR", numbers=[3],
+                                        reviewers=["alice"], days_waiting=5),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        result = _serialize_grouped_content(content)
+        item = result["Waiting for Review"]["org/repo"][0]
+        assert item["reviewers"] == ["alice"]
+        assert item["days_waiting"] == 5
+
+    def test_roundtrip_with_regroup_contribution(self):
+        """regroup_content → _serialize_grouped_content produces expected keys."""
+        report = _make_report(
+            authored_prs=[
+                AuthoredPR(repo="org/alpha", title="Feature", number=1,
+                           status="Open", additions=10, deletions=5,
+                           contributed=False, original_author=None),
+            ],
+            reviewed_prs=[
+                ReviewedPR(repo="org/beta", title="Review", number=2,
+                           author="other", status="Merged"),
+            ],
+        )
+        grouped = regroup_content(report, "contribution")
+        serialized = _serialize_grouped_content(grouped)
+        assert "Authored / Contributed" in serialized
+        assert "org/alpha" in serialized["Authored / Contributed"]
+        assert "Reviewed" in serialized
+        assert "org/beta" in serialized["Reviewed"]
+
+    def test_roundtrip_with_regroup_project(self):
+        report = _make_report(
+            authored_prs=[
+                AuthoredPR(repo="org/alpha", title="Feature", number=1,
+                           status="Open", additions=10, deletions=5,
+                           contributed=False, original_author=None),
+            ],
+        )
+        grouped = regroup_content(report, "project")
+        serialized = _serialize_grouped_content(grouped)
+        assert "org/alpha" in serialized
+        assert "Open" in serialized["org/alpha"]
+
+    def test_roundtrip_with_regroup_status(self):
+        report = _make_report(
+            authored_prs=[
+                AuthoredPR(repo="org/alpha", title="Feature", number=1,
+                           status="Open", additions=10, deletions=5,
+                           contributed=False, original_author=None),
+            ],
+        )
+        grouped = regroup_content(report, "status")
+        serialized = _serialize_grouped_content(grouped)
+        assert "Open" in serialized
+        assert "org/alpha" in serialized["Open"]
 
 
 # ---------------------------------------------------------------------------

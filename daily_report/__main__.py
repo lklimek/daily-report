@@ -815,17 +815,13 @@ def main():
 
     # Prepare content (default or consolidated)
     if args.consolidate:
-        if args.group_by != "contribution":
-            print(
-                "Warning: --group-by is ignored when --consolidate is used.",
-                file=sys.stderr,
-            )
         from daily_report.content import prepare_consolidated_content
         try:
             report.content = prepare_consolidated_content(
                 report,
                 model=args.model or "claude-haiku-4-5-20251001",
                 prompt=cfg.consolidate_prompt or None,
+                group_by=args.group_by,
             )
         except ImportError:
             print(
