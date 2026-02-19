@@ -400,10 +400,19 @@ def main():
         help="group report by: project, status, or contribution type (default: contribution)",
     )
     parser.add_argument(
+        "--waiting-days", dest="waiting_days", type=int, default=365,
+        help="max age in days for 'waiting for review' PRs (default: %(default)s; minimum 1)",
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true", default=False,
         help="enable verbose/debug logging (useful for troubleshooting --consolidate/--summary)",
     )
     args = parser.parse_args()
+
+    # Validate numeric arguments
+    if args.waiting_days < 1:
+        print("Error: --waiting-days must be at least 1.", file=sys.stderr)
+        sys.exit(1)
 
     # Configure logging early, before any other logic
     if args.verbose:
@@ -779,6 +788,8 @@ def main():
                     days_waiting = max(0, (ref_date - assigned).days)
                 except (ValueError, TypeError):
                     days_waiting = 0
+                if days_waiting > args.waiting_days:
+                    continue
                 waiting_prs_list.append(WaitingPR(
                     repo=f"{pr_org}/{repo_name}",
                     title=node.get("title", ""),
