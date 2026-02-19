@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+logger = logging.getLogger("daily_report.content")
 
 from daily_report.report_data import (
     AuthoredPR,
@@ -381,16 +384,25 @@ def prepare_consolidated_content(
     grouped = regroup_content(report, group_by)
     grouped_data = _serialize_grouped_content(grouped)
     if not grouped_data:
+        logger.debug("No grouped data to consolidate — returning empty list")
         return []
+
+    logger.debug(
+        "Consolidation input: %d groups, %d chars of JSON",
+        len(grouped_data),
+        len(json.dumps(grouped_data)),
+    )
 
     schema = _load_schema()
     if prompt:
         system_prompt: str | list[dict] = prompt
+        logger.debug("Using custom consolidation prompt (%d chars)", len(prompt))
     else:
         system_prompt = [
             {"type": "text", "text": _load_prompt("consolidation")},
             {"type": "text", "text": _CONSOLIDATION_FORMAT},
         ]
+        logger.debug("Using default consolidation prompt")
 
     # Include schema in user message so the AI can self-validate
     user_message = (
@@ -400,6 +412,11 @@ def prepare_consolidated_content(
     )
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    logger.debug(
+        "Auth method: %s, model: %s",
+        "ANTHROPIC_API_KEY" if api_key else "claude-agent-sdk",
+        model,
+    )
     return _call_with_retry(api_key, model, system_prompt, user_message, schema)
 
 
@@ -425,19 +442,29 @@ def prepare_ai_summary(
     """
     repos_data = _build_repos_data(report)
     if not repos_data:
+        logger.debug("No repos data for AI summary — returning empty string")
         return ""
 
     if prompt:
         system_prompt: str | list[dict] = prompt
+        logger.debug("Using custom summary prompt (%d chars)", len(prompt))
     else:
         system_prompt = [
             {"type": "text", "text": _load_prompt("summary")},
             {"type": "text", "text": _SUMMARY_FORMAT},
         ]
+        logger.debug("Using default summary prompt")
     user_message = json.dumps(repos_data, indent=2)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    logger.debug(
+        "AI summary: auth=%s, model=%s, input=%d chars",
+        "ANTHROPIC_API_KEY" if api_key else "claude-agent-sdk",
+        model,
+        len(user_message),
+    )
     text = _call_backend(api_key, model, system_prompt, user_message)
+    logger.debug("AI summary response: %d chars", len(text.strip()))
     return text.strip()
 
 
@@ -447,6 +474,7 @@ def _call_via_sdk(
     """Call Claude via the anthropic Python SDK (API key auth)."""
     import anthropic  # lazy import
 
+    logger.debug("Calling Claude SDK (anthropic) with model=%s", model)
     client = anthropic.Anthropic(api_key=api_key)
     try:
         response = client.messages.create(
@@ -457,12 +485,20 @@ def _call_via_sdk(
             system=system_prompt,
         )
     except anthropic.APIError as e:
+        logger.debug("Claude SDK API error: %s (%s)", type(e).__name__, e)
         raise RuntimeError(f"Claude API call failed: {e}") from e
 
     text = ""
     for block in response.content:
         if block.type == "text":
             text += block.text
+    logger.debug(
+        "Claude SDK response: model=%s, stop=%s, usage=%s, %d chars",
+        response.model,
+        response.stop_reason,
+        f"in={response.usage.input_tokens}/out={response.usage.output_tokens}",
+        len(text),
+    )
     return text
 
 
@@ -474,6 +510,7 @@ def _call_via_sdk_agent(
     Uses the Claude Agent SDK which handles whatever authentication
     the user has configured (subscription, OAuth token, etc.).
     """
+    logger.debug("Calling Claude Agent SDK with model=%s", model)
     from claude_agent_sdk import (  # lazy import
         ClaudeAgentOptions,
         ResultMessage,
@@ -485,6 +522,7 @@ def _call_via_sdk_agent(
     else:
         system_text = system_prompt
     full_prompt = f"{system_text}\n\n{user_message}"
+    logger.debug("Agent SDK prompt length: %d chars", len(full_prompt))
     options = ClaudeAgentOptions(
         model=model,
         max_turns=1,
@@ -495,15 +533,18 @@ def _call_via_sdk_agent(
         result_text = ""
         try:
             async for message in query(prompt=full_prompt, options=options):
+                logger.debug("Agent SDK message: %s", type(message).__name__)
                 if isinstance(message, ResultMessage):
                     result_text = message.result or ""
         except Exception as e:
-            raise RuntimeError(f"Claude SDK call failed: {e}") from e
+            logger.debug("Agent SDK error: %s (%s)", type(e).__name__, e)
+            raise RuntimeError(f"Claude Agent SDK call failed: {e}") from e
         return result_text
 
     text = asyncio.run(_run())
     if not text:
-        raise RuntimeError("Claude SDK returned empty response")
+        raise RuntimeError("Claude Agent SDK returned empty response")
+    logger.debug("Agent SDK response: %d chars", len(text))
     return text
 
 
@@ -528,7 +569,9 @@ def _call_backend(
 ) -> str:
     """Call the AI backend (SDK or CLI) and return the raw text response."""
     if api_key:
+        logger.debug("Using anthropic SDK backend (API key present)")
         return _call_via_sdk(api_key, model, system_prompt, user_message)
+    logger.debug("No ANTHROPIC_API_KEY — falling back to Claude Agent SDK")
     return _call_via_sdk_agent(model, system_prompt, user_message)
 
 
@@ -537,7 +580,9 @@ def _parse_and_validate(text: str, schema: dict) -> list[RepoContent]:
 
     Raises RuntimeError if extraction or validation fails.
     """
+    logger.debug("Raw AI response (%d chars): %.500s", len(text), text)
     stripped = _extract_json(text)
+    logger.debug("Extracted JSON (%d chars): %.500s", len(stripped), stripped)
 
     try:
         parsed = json.loads(stripped)
@@ -545,14 +590,19 @@ def _parse_and_validate(text: str, schema: dict) -> list[RepoContent]:
         raise RuntimeError(f"Failed to parse Claude response as JSON: {e}") from e
 
     if not isinstance(parsed, dict):
-        raise RuntimeError("Claude response is not a JSON object")
+        raise RuntimeError(
+            f"Claude response is not a JSON object (got {type(parsed).__name__})"
+        )
+
+    logger.debug("Parsed JSON: %d top-level keys: %s", len(parsed), list(parsed.keys()))
 
     # Validate against schema if jsonschema is available
     try:
         import jsonschema
         jsonschema.validate(instance=parsed, schema=schema)
+        logger.debug("Schema validation passed")
     except ImportError:
-        pass  # jsonschema not installed — skip validation
+        logger.debug("jsonschema not installed — skipping validation")
     except jsonschema.ValidationError as e:
         raise RuntimeError(f"Response failed schema validation: {e.message}") from e
 
@@ -561,11 +611,13 @@ def _parse_and_validate(text: str, schema: dict) -> list[RepoContent]:
     for group_name in sorted(parsed):
         subgroups = parsed[group_name]
         if not isinstance(subgroups, dict):
+            logger.debug("Skipping group %r: value is %s, not dict", group_name, type(subgroups).__name__)
             continue
         blocks: list[ContentBlock] = []
         for subgroup_name in subgroups:
             items_data = subgroups[subgroup_name]
             if not isinstance(items_data, list):
+                logger.debug("Skipping subgroup %r/%r: value is %s, not list", group_name, subgroup_name, type(items_data).__name__)
                 continue
             items: list[ContentItem] = []
             for item in items_data:
@@ -583,6 +635,8 @@ def _parse_and_validate(text: str, schema: dict) -> list[RepoContent]:
         if blocks:
             result.append(RepoContent(repo_name=group_name, blocks=blocks))
 
+    total_items = sum(len(block.items) for rc in result for block in rc.blocks)
+    logger.debug("Built %d RepoContent groups with %d total items", len(result), total_items)
     return result
 
 
@@ -598,10 +652,14 @@ def _call_with_retry(
     On failure, retries once with the error message and expected schema
     to give the AI a chance to correct its output.
     """
+    logger.debug("Calling AI backend (attempt 1)")
     text = _call_backend(api_key, model, system_prompt, user_message)
     try:
-        return _parse_and_validate(text, schema)
+        result = _parse_and_validate(text, schema)
+        logger.debug("Parse/validate succeeded on first attempt")
+        return result
     except RuntimeError as first_error:
+        logger.debug("First attempt failed: %s — retrying with correction prompt", first_error)
         # Single retry with correction prompt
         correction = (
             "Your previous response could not be parsed. Error:\n"
@@ -611,8 +669,11 @@ def _call_with_retry(
             "Return ONLY the corrected JSON — no markdown fences, "
             "no explanation, no preamble."
         )
+        logger.debug("Calling AI backend (attempt 2 — correction)")
         retry_text = _call_backend(api_key, model, system_prompt, correction)
-        return _parse_and_validate(retry_text, schema)
+        result = _parse_and_validate(retry_text, schema)
+        logger.debug("Parse/validate succeeded on retry")
+        return result
 
 
 def _extract_json(text: str) -> str:

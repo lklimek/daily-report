@@ -12,6 +12,7 @@ Falls back to GraphQL-only mode when no local repos are configured.
 
 import argparse
 import json
+import logging
 import os
 import re
 import subprocess
@@ -398,7 +399,19 @@ def main():
         choices=["project", "status", "contribution"],
         help="group report by: project, status, or contribution type (default: contribution)",
     )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", default=False,
+        help="enable verbose/debug logging (useful for troubleshooting --consolidate/--summary)",
+    )
     args = parser.parse_args()
+
+    # Configure logging early, before any other logic
+    if args.verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(name)s %(levelname)s: %(message)s",
+            stream=sys.stderr,
+        )
 
     # Validate flag combinations before any network calls (e.g. get_current_user)
     if args.slides_output and not args.slides:
@@ -823,12 +836,23 @@ def main():
                 prompt=cfg.consolidate_prompt or None,
                 group_by=args.group_by,
             )
-        except ImportError:
-            print(
-                "Error: anthropic package required for --consolidate. "
-                "Install it with: pip install anthropic",
-                file=sys.stderr,
-            )
+        except ImportError as e:
+            missing = str(e)
+            if "anthropic" in missing:
+                print(
+                    "Error: anthropic package required for --consolidate. "
+                    "Install it with: pip install anthropic",
+                    file=sys.stderr,
+                )
+            elif "claude_agent_sdk" in missing:
+                print(
+                    "Error: No ANTHROPIC_API_KEY set and claude-agent-sdk is not installed.\n"
+                    "Either set the ANTHROPIC_API_KEY environment variable, or install "
+                    "claude-agent-sdk for OAuth/subscription auth.",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"Error: missing dependency for --consolidate: {e}", file=sys.stderr)
             sys.exit(1)
         except RuntimeError as e:
             print(f"Error: consolidation failed: {e}", file=sys.stderr)
@@ -846,6 +870,24 @@ def main():
                 model=args.model or "claude-haiku-4-5-20251001",
                 prompt=cfg.summary_prompt or None,
             )
+        except ImportError as e:
+            missing = str(e)
+            if "anthropic" in missing:
+                print(
+                    "Error: anthropic package required for --summary. "
+                    "Install it with: pip install anthropic",
+                    file=sys.stderr,
+                )
+            elif "claude_agent_sdk" in missing:
+                print(
+                    "Error: No ANTHROPIC_API_KEY set and claude-agent-sdk is not installed.\n"
+                    "Either set the ANTHROPIC_API_KEY environment variable, or install "
+                    "claude-agent-sdk for OAuth/subscription auth.",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"Error: missing dependency for --summary: {e}", file=sys.stderr)
+            sys.exit(1)
         except RuntimeError as e:
             print(f"Error: AI summary failed: {e}", file=sys.stderr)
             sys.exit(1)
