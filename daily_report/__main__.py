@@ -392,7 +392,7 @@ def main():
     )
     parser.add_argument(
         "--model", default=None,
-        help="Claude model for --consolidate/--summary (default: claude-haiku-4-5-20251001)",
+        help="Claude model for --consolidate/--summary (default: claude-sonnet-4-5-20250929)",
     )
     parser.add_argument(
         "--group-by", dest="group_by", default="contribution",
@@ -851,7 +851,7 @@ def main():
         try:
             report.consolidated_markdown = prepare_consolidated_content(
                 report,
-                model=args.model or "claude-haiku-4-5-20251001",
+                model=args.model or "claude-sonnet-4-5-20250929",
                 prompt=cfg.consolidate_prompt or None,
                 group_by=args.group_by,
                 repo_paths=repo_paths,
@@ -884,7 +884,7 @@ def main():
         try:
             report.summary.ai_summary = prepare_ai_summary(
                 report,
-                model=args.model or "claude-haiku-4-5-20251001",
+                model=args.model or "claude-sonnet-4-5-20250929",
                 prompt=cfg.summary_prompt or None,
             )
         except ImportError as e:
@@ -944,6 +944,7 @@ def main():
         print(f"Slides written to {output_path}", file=sys.stderr)
     else:
         output = format_markdown(report, group_by=args.group_by)
+        print()
         print(output)
 
 

@@ -516,7 +516,7 @@ def _regroup_by_status(report: ReportData) -> list[RepoContent]:
 
 def prepare_consolidated_content(
     report: ReportData,
-    model: str = "claude-haiku-4-5-20251001",
+    model: str = "claude-sonnet-4-5-20250929",
     prompt: str | None = None,
     group_by: str = "contribution",
     repo_paths: dict[str, str] | None = None,
@@ -588,7 +588,7 @@ def prepare_consolidated_content(
 
 def prepare_ai_summary(
     report: ReportData,
-    model: str = "claude-haiku-4-5-20251001",
+    model: str = "claude-sonnet-4-5-20250929",
     prompt: str | None = None,
 ) -> str:
     """Generate a short AI-powered summary of the report (<320 chars).
