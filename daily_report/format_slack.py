@@ -22,6 +22,9 @@ _TRUNCATION_SUFFIX = "\n\u2026 (truncated)"
 def format_slack(report: ReportData, group_by: str = "project") -> dict:
     """Build a Slack Block Kit payload from the report.
 
+    When ``report.consolidated_markdown`` is set, parses the consolidated
+    markdown into Slack blocks. Otherwise uses structured ``report.content``.
+
     Args:
         report: Complete report data with content already prepared.
         group_by: Grouping mode — "project", "status", or "contribution".
@@ -33,36 +36,39 @@ def format_slack(report: ReportData, group_by: str = "project") -> dict:
 
     blocks.extend(_header_blocks(report))
 
-    if not report.content:
+    if report.consolidated_markdown:
+        md_blocks = _parse_markdown_to_blocks(report.consolidated_markdown)
+        blocks.extend(md_blocks)
+    elif not report.content:
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": "No PR activity found for this period."},
         })
         return {"blocks": blocks}
+    else:
+        # Budget: reserve 2 blocks for summary section (section + divider before it)
+        budget = _MAX_BLOCKS - len(blocks) - 2
+        repos_added = 0
 
-    # Budget: reserve 2 blocks for summary section (section + divider before it)
-    budget = _MAX_BLOCKS - len(blocks) - 2
-    repos_added = 0
-
-    for repo in report.content:
-        repo_blocks = _content_blocks(repo, group_by)
-        # Each repo section also gets a trailing divider
-        needed = len(repo_blocks) + 1
-        if needed > budget:
-            remaining = len(report.content) - repos_added
-            if remaining > 0:
-                blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"\u2026 and {remaining} more repositories",
-                    },
-                })
-            break
-        blocks.extend(repo_blocks)
-        blocks.append({"type": "divider"})
-        budget -= needed
-        repos_added += 1
+        for repo in report.content:
+            repo_blocks = _content_blocks(repo, group_by)
+            # Each repo section also gets a trailing divider
+            needed = len(repo_blocks) + 1
+            if needed > budget:
+                remaining = len(report.content) - repos_added
+                if remaining > 0:
+                    blocks.append({
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"\u2026 and {remaining} more repositories",
+                        },
+                    })
+                break
+            blocks.extend(repo_blocks)
+            blocks.append({"type": "divider"})
+            budget -= needed
+            repos_added += 1
 
     blocks.extend(_summary_blocks(report))
 
@@ -245,3 +251,50 @@ def _truncate_text(text: str, max_len: int = 2900) -> str:
     if len(text) <= max_len:
         return text
     return text[:max_len] + _TRUNCATION_SUFFIX
+
+
+def _md_to_mrkdwn(text: str) -> str:
+    """Convert basic Markdown to Slack mrkdwn.
+
+    Handles: links [text](url) → <url|text>, backtick code stays as-is,
+    bold/italic stay as-is (Slack uses same syntax).
+    """
+    import re
+    return re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", text)
+
+
+def _parse_markdown_to_blocks(markdown: str) -> list[dict]:
+    """Parse consolidated markdown into Slack Block Kit blocks.
+
+    Expects H2 sections with bullet items. Skips H1 and **Summary:** line.
+    """
+    blocks: list[dict] = []
+    current_section = ""
+    current_lines: list[str] = []
+
+    def _flush():
+        if current_section and current_lines:
+            text = f"*{current_section}*\n" + "\n".join(current_lines)
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": _truncate_text(text)},
+            })
+            blocks.append({"type": "divider"})
+
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# ") and not stripped.startswith("## "):
+            continue  # skip H1
+        if stripped.startswith("**Summary:**"):
+            continue  # skip summary
+        if stripped.startswith("## "):
+            _flush()
+            current_section = stripped[3:].strip()
+            current_lines = []
+        elif stripped.startswith("- "):
+            bullet_text = _md_to_mrkdwn(stripped[2:].strip())
+            if bullet_text:
+                current_lines.append(f"\u2022 {bullet_text}")
+
+    _flush()
+    return blocks

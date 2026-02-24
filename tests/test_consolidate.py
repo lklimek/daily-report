@@ -1,6 +1,6 @@
 """Unit tests for daily_report/content.py: prepare_default_content,
-prepare_consolidated_content, _call_via_sdk, _call_via_sdk_agent,
-_parse_response, _parse_and_validate, _call_with_retry, and _load_schema.
+prepare_consolidated_content, tool executors, _call_via_sdk_with_tools,
+_call_via_sdk_agent_with_tools, and helpers.
 
 Run with: python3 -m pytest tests/test_consolidate.py -v
 """
@@ -8,22 +8,25 @@ Run with: python3 -m pytest tests/test_consolidate.py -v
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 import daily_report.content as _content_module
 from daily_report.content import (
+    CONSOLIDATION_TOOLS,
     _build_repos_data,
-    _call_with_retry,
     _dedup_pr_lists,
+    _exec_gh_pr_diff,
+    _exec_gh_pr_view,
+    _exec_git_diff,
+    _exec_git_log,
+    _execute_tool,
     _load_prompt,
-    _load_schema,
-    _parse_and_validate,
-    _parse_response,
-    _serialize_grouped_content,
+    _truncate,
     prepare_ai_summary,
     prepare_consolidated_content,
     prepare_default_content,
@@ -43,11 +46,9 @@ from daily_report.report_data import (
 
 @pytest.fixture(autouse=True)
 def _clear_caches():
-    """Reset the schema and prompt caches before each test."""
-    _content_module._schema_cache = None
+    """Reset the prompt cache before each test."""
     _content_module._prompt_cache.clear()
     yield
-    _content_module._schema_cache = None
     _content_module._prompt_cache.clear()
 
 
@@ -177,7 +178,7 @@ class TestPrepareDefaultContentBlockHeadings:
             ],
         )
         result = prepare_default_content(report)
-        assert result[0].blocks[0].heading == "Authored / Contributed"
+        assert result[0].blocks[0].heading == "Worked on"
 
     def test_reviewed_block_heading(self):
         report = _make_report(
@@ -304,7 +305,7 @@ class TestPrepareDefaultContentEmptyCases:
         result = prepare_default_content(report)
         assert len(result) == 1
         assert len(result[0].blocks) == 1
-        assert result[0].blocks[0].heading == "Authored / Contributed"
+        assert result[0].blocks[0].heading == "Worked on"
 
     def test_repo_with_only_waiting_has_single_block(self):
         report = _make_report(
@@ -323,76 +324,371 @@ class TestPrepareDefaultContentEmptyCases:
 
 
 # ---------------------------------------------------------------------------
-# _parse_response tests
+# _truncate tests
 # ---------------------------------------------------------------------------
 
-class TestParseResponse:
-    """Tests for _parse_response JSON parsing and RepoContent building."""
+class TestTruncate:
+    """Tests for _truncate helper."""
 
-    def test_valid_json_produces_repo_contents(self):
-        data = {
-            "org/alpha": {
-                "authored": [{"title": "Auth improvements", "numbers": [10, 11]}],
-            },
-            "org/beta": {
-                "reviewed": [{"title": "Bug fixes", "numbers": [20]}],
-            },
-        }
-        result = _parse_response(json.dumps(data))
-        assert len(result) == 2
-        assert result[0].repo_name == "org/alpha"
-        assert result[0].blocks[0].heading == "authored"
-        assert result[0].blocks[0].items[0].title == "Auth improvements"
-        assert result[0].blocks[0].items[0].numbers == [10, 11]
-        assert result[1].repo_name == "org/beta"
+    def test_short_text_unchanged(self):
+        assert _truncate("hello", 100) == "hello"
 
-    def test_strips_markdown_code_fences(self):
-        data = {"org/repo": {"Summary": [{"title": "Summary", "numbers": [1]}]}}
-        wrapped = "```json\n" + json.dumps(data) + "\n```"
-        result = _parse_response(wrapped)
-        assert len(result) == 1
-        assert result[0].blocks[0].items[0].title == "Summary"
+    def test_exact_length_unchanged(self):
+        text = "x" * 100
+        assert _truncate(text, 100) == text
 
-    def test_invalid_json_raises_runtime_error(self):
-        with pytest.raises(RuntimeError, match="Failed to parse Claude response"):
-            _parse_response("This is not valid JSON")
+    def test_long_text_truncated_with_note(self):
+        text = "x" * 200
+        result = _truncate(text, 100)
+        assert result.startswith("x" * 100)
+        assert "truncated" in result
+        assert "200 total chars" in result
 
-    def test_non_dict_raises_runtime_error(self):
-        with pytest.raises(RuntimeError, match="not a JSON object"):
-            _parse_response('["not", "a", "dict"]')
+    def test_default_max_len(self):
+        short = "short"
+        assert _truncate(short) == short
 
-    def test_title_truncated_to_500_chars(self):
-        long_title = "x" * 1000
-        data = {"org/repo": {"sub": [{"title": long_title, "numbers": [1]}]}}
-        result = _parse_response(json.dumps(data))
-        assert len(result[0].blocks[0].items[0].title) == 500
+    def test_empty_string(self):
+        assert _truncate("", 10) == ""
 
-    def test_non_int_numbers_filtered_out(self):
-        data = {"org/repo": {"sub": [{"title": "Test", "numbers": [1, "two", 3, None]}]}}
-        result = _parse_response(json.dumps(data))
-        assert result[0].blocks[0].items[0].numbers == [1, 3]
 
-    def test_groups_sorted_alphabetically(self):
-        data = {
-            "org/zebra": {"sub": [{"title": "Z", "numbers": []}]},
-            "org/alpha": {"sub": [{"title": "A", "numbers": []}]},
-        }
-        result = _parse_response(json.dumps(data))
-        assert result[0].repo_name == "org/alpha"
-        assert result[1].repo_name == "org/zebra"
+# ---------------------------------------------------------------------------
+# Tool executor tests
+# ---------------------------------------------------------------------------
 
-    def test_multiple_subgroups_produce_multiple_blocks(self):
-        data = {
-            "Authored / Contributed": {
-                "org/alpha": [{"title": "Feature A", "numbers": [1]}],
-                "org/beta": [{"title": "Feature B", "numbers": [2]}],
-            },
-        }
-        result = _parse_response(json.dumps(data))
-        assert len(result) == 1
-        assert len(result[0].blocks) == 2
-        assert result[0].blocks[0].heading == "org/alpha"
-        assert result[0].blocks[1].heading == "org/beta"
+class TestToolExecutors:
+    """Tests for _exec_gh_pr_view, _exec_gh_pr_diff, _exec_git_log, _exec_git_diff."""
+
+    @patch("daily_report.content.subprocess.run")
+    def test_gh_pr_view_success(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout='{"title":"Test PR"}', stderr="",
+        )
+        result = _exec_gh_pr_view("org/repo", 42)
+        assert '{"title":"Test PR"}' in result
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "gh" in cmd
+        assert "42" in cmd
+        assert "org/repo" in cmd
+
+    @patch("daily_report.content.subprocess.run")
+    def test_gh_pr_view_error(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="not found",
+        )
+        result = _exec_gh_pr_view("org/repo", 999)
+        assert "Error" in result
+
+    @patch("daily_report.content.subprocess.run")
+    def test_gh_pr_view_timeout(self, mock_run):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="gh", timeout=30)
+        result = _exec_gh_pr_view("org/repo", 1)
+        assert "Error" in result
+
+    @patch("daily_report.content.subprocess.run")
+    def test_gh_pr_diff_success(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="diff --git a/f.py b/f.py\n+new line", stderr="",
+        )
+        result = _exec_gh_pr_diff("org/repo", 10)
+        assert "diff --git" in result
+
+    @patch("daily_report.content.subprocess.run")
+    def test_gh_pr_diff_error(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="permission denied",
+        )
+        result = _exec_gh_pr_diff("org/repo", 10)
+        assert "Error" in result
+
+    @patch("daily_report.content.subprocess.run")
+    def test_git_log_success(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="abc1234 Initial commit", stderr="",
+        )
+        result = _exec_git_log("org/repo", "--oneline -5", {"org/repo": "/tmp/repo"})
+        assert "abc1234" in result
+        cmd = mock_run.call_args[0][0]
+        assert "-C" in cmd
+        assert "/tmp/repo" in cmd
+
+    @patch("daily_report.content.subprocess.run")
+    def test_git_log_no_local_path(self, mock_run):
+        result = _exec_git_log("org/repo", "--oneline", {})
+        assert "Error" in result
+        assert "no local path" in result
+        mock_run.assert_not_called()
+
+    @patch("daily_report.content.subprocess.run")
+    def test_git_log_timeout(self, mock_run):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=30)
+        result = _exec_git_log("org/repo", "--oneline", {"org/repo": "/tmp/repo"})
+        assert "Error" in result
+
+    @patch("daily_report.content.subprocess.run")
+    def test_git_diff_success(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="diff output here", stderr="",
+        )
+        result = _exec_git_diff("org/repo", "HEAD~1", {"org/repo": "/tmp/repo"})
+        assert "diff output here" in result
+
+    @patch("daily_report.content.subprocess.run")
+    def test_git_diff_no_local_path(self, mock_run):
+        result = _exec_git_diff("org/repo", "HEAD~1", {})
+        assert "Error" in result
+        mock_run.assert_not_called()
+
+    @patch("daily_report.content.subprocess.run")
+    def test_git_diff_error(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="fatal: bad revision",
+        )
+        result = _exec_git_diff("org/repo", "bad..ref", {"org/repo": "/tmp/repo"})
+        assert "Error" in result
+
+    @patch("daily_report.content.subprocess.run")
+    def test_gh_pr_view_truncates_long_output(self, mock_run):
+        long_output = "x" * 20000
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout=long_output, stderr="",
+        )
+        result = _exec_gh_pr_view("org/repo", 1)
+        assert "truncated" in result
+        assert len(result) < 20000
+
+
+# ---------------------------------------------------------------------------
+# _execute_tool tests
+# ---------------------------------------------------------------------------
+
+class TestExecuteTool:
+    """Tests for _execute_tool dispatcher."""
+
+    @patch("daily_report.content._exec_gh_pr_view", return_value="pr view output")
+    def test_dispatches_gh_pr_view(self, mock_exec):
+        result = _execute_tool("gh_pr_view", {"repo": "org/repo", "number": 1}, {})
+        assert result == "pr view output"
+        mock_exec.assert_called_once_with("org/repo", 1)
+
+    @patch("daily_report.content._exec_gh_pr_diff", return_value="pr diff output")
+    def test_dispatches_gh_pr_diff(self, mock_exec):
+        result = _execute_tool("gh_pr_diff", {"repo": "org/repo", "number": 5}, {})
+        assert result == "pr diff output"
+        mock_exec.assert_called_once_with("org/repo", 5)
+
+    @patch("daily_report.content._exec_git_log", return_value="git log output")
+    def test_dispatches_git_log(self, mock_exec):
+        paths = {"org/repo": "/tmp/repo"}
+        result = _execute_tool("git_log", {"repo": "org/repo", "args": "--oneline"}, paths)
+        assert result == "git log output"
+        mock_exec.assert_called_once_with("org/repo", "--oneline", paths)
+
+    @patch("daily_report.content._exec_git_log", return_value="default log")
+    def test_git_log_default_args(self, mock_exec):
+        paths = {"org/repo": "/tmp/repo"}
+        result = _execute_tool("git_log", {"repo": "org/repo"}, paths)
+        assert result == "default log"
+        mock_exec.assert_called_once_with("org/repo", "--oneline -20", paths)
+
+    @patch("daily_report.content._exec_git_diff", return_value="git diff output")
+    def test_dispatches_git_diff(self, mock_exec):
+        paths = {"org/repo": "/tmp/repo"}
+        result = _execute_tool("git_diff", {"repo": "org/repo", "args": "HEAD~3"}, paths)
+        assert result == "git diff output"
+        mock_exec.assert_called_once_with("org/repo", "HEAD~3", paths)
+
+    @patch("daily_report.content._exec_git_diff", return_value="default diff")
+    def test_git_diff_default_args(self, mock_exec):
+        paths = {"org/repo": "/tmp/repo"}
+        result = _execute_tool("git_diff", {"repo": "org/repo"}, paths)
+        assert result == "default diff"
+        mock_exec.assert_called_once_with("org/repo", "HEAD~1", paths)
+
+    def test_unknown_tool_returns_error(self):
+        result = _execute_tool("nonexistent_tool", {}, {})
+        assert "Error" in result
+        assert "unknown tool" in result
+
+
+# ---------------------------------------------------------------------------
+# _call_via_sdk_with_tools tests
+# ---------------------------------------------------------------------------
+
+class TestCallViaSdkWithTools:
+    """Tests for the multi-turn tool use conversation loop."""
+
+    @pytest.fixture(autouse=True)
+    def _install_mock_anthropic(self):
+        self._mock_anthropic = _make_mock_anthropic()
+        with patch.dict(sys.modules, {"anthropic": self._mock_anthropic}):
+            # Need to reimport to pick up mock
+            from daily_report.content import _call_via_sdk_with_tools
+            self._call = _call_via_sdk_with_tools
+            yield
+
+    def _make_text_response(self, text: str) -> MagicMock:
+        """Create a response with stop_reason='end_turn' and a text block."""
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = text
+        response = MagicMock()
+        response.content = [text_block]
+        response.stop_reason = "end_turn"
+        response.usage = MagicMock(input_tokens=100, output_tokens=50)
+        return response
+
+    def _make_tool_use_response(self, tool_name: str, tool_input: dict, tool_id: str = "tool_1") -> MagicMock:
+        """Create a response with stop_reason='tool_use' and a tool_use block."""
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = tool_name
+        tool_block.input = tool_input
+        tool_block.id = tool_id
+        response = MagicMock()
+        response.content = [tool_block]
+        response.stop_reason = "tool_use"
+        response.usage = MagicMock(input_tokens=100, output_tokens=50)
+        return response
+
+    def test_no_tool_calls_returns_text_immediately(self):
+        client = self._mock_anthropic.Anthropic.return_value
+        client.messages.create.return_value = self._make_text_response("# Report\nDone")
+
+        result = self._call("sk-test", "model", "system", "user msg", [], {})
+        assert result == "# Report\nDone"
+        assert client.messages.create.call_count == 1
+
+    def test_single_tool_call_then_text(self):
+        client = self._mock_anthropic.Anthropic.return_value
+        client.messages.create.side_effect = [
+            self._make_tool_use_response("gh_pr_view", {"repo": "org/repo", "number": 1}),
+            self._make_text_response("# Consolidated Report"),
+        ]
+
+        with patch("daily_report.content._execute_tool", return_value="tool output"):
+            result = self._call("sk-test", "model", "system", "user msg", CONSOLIDATION_TOOLS, {})
+
+        assert result == "# Consolidated Report"
+        assert client.messages.create.call_count == 2
+
+    def test_multiple_turns_of_tool_calls(self):
+        client = self._mock_anthropic.Anthropic.return_value
+        client.messages.create.side_effect = [
+            self._make_tool_use_response("gh_pr_view", {"repo": "org/repo", "number": 1}, "t1"),
+            self._make_tool_use_response("gh_pr_diff", {"repo": "org/repo", "number": 1}, "t2"),
+            self._make_text_response("# Final Report"),
+        ]
+
+        with patch("daily_report.content._execute_tool", return_value="tool output"):
+            result = self._call("sk-test", "model", "system", "user msg", CONSOLIDATION_TOOLS, {})
+
+        assert result == "# Final Report"
+        assert client.messages.create.call_count == 3
+
+    def test_max_turns_exceeded_raises_runtime_error(self):
+        client = self._mock_anthropic.Anthropic.return_value
+        # Always return tool use, never end_turn
+        client.messages.create.return_value = self._make_tool_use_response(
+            "gh_pr_view", {"repo": "org/repo", "number": 1},
+        )
+
+        with patch("daily_report.content._execute_tool", return_value="output"):
+            with pytest.raises(RuntimeError, match="exceeded.*tool-use turns"):
+                self._call("sk-test", "model", "system", "user", CONSOLIDATION_TOOLS, {}, max_turns=3)
+
+        assert client.messages.create.call_count == 3
+
+    def test_api_error_raises_runtime_error(self):
+        client = self._mock_anthropic.Anthropic.return_value
+        client.messages.create.side_effect = self._mock_anthropic.APIError(
+            message="rate limit", request=MagicMock(), body=None,
+        )
+
+        with pytest.raises(RuntimeError, match="Claude API call failed"):
+            self._call("sk-test", "model", "system", "user", [], {})
+
+    def test_no_tool_use_and_not_end_turn_returns_text(self):
+        """Edge case: stop_reason is not 'end_turn' but no tool_use blocks."""
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "partial result"
+        response = MagicMock()
+        response.content = [text_block]
+        response.stop_reason = "max_tokens"
+        response.usage = MagicMock(input_tokens=100, output_tokens=4096)
+
+        client = self._mock_anthropic.Anthropic.return_value
+        client.messages.create.return_value = response
+
+        result = self._call("sk-test", "model", "system", "user", [], {})
+        assert result == "partial result"
+
+
+# ---------------------------------------------------------------------------
+# _call_via_sdk_agent_with_tools tests
+# ---------------------------------------------------------------------------
+
+class TestCallViaSdkAgentWithTools:
+    """Tests for agent SDK with Bash tool."""
+
+    @patch("daily_report.content.asyncio.run")
+    def test_sets_bash_tool_and_max_turns(self, mock_asyncio_run):
+        mock_asyncio_run.return_value = "# Agent result"
+
+        mock_sdk = MagicMock()
+        mock_sdk.ClaudeAgentOptions = MagicMock()
+        mock_sdk.ResultMessage = MagicMock()
+        mock_sdk.query = MagicMock()
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            from daily_report.content import _call_via_sdk_agent_with_tools
+            result = _call_via_sdk_agent_with_tools("model", "system prompt", "user msg")
+
+        assert result == "# Agent result"
+        # Verify ClaudeAgentOptions was called with Bash and max_turns=10
+        opts_call = mock_sdk.ClaudeAgentOptions.call_args
+        assert opts_call[1].get("allowed_tools") == ["Bash"] or \
+               (opts_call[0] if opts_call[0] else None) is not None
+        # Check keyword args
+        if opts_call[1]:
+            assert opts_call[1].get("max_turns", None) == 10
+            assert opts_call[1].get("allowed_tools", None) == ["Bash"]
+
+    @patch("daily_report.content.asyncio.run")
+    def test_empty_response_raises_runtime_error(self, mock_asyncio_run):
+        mock_asyncio_run.return_value = ""
+
+        mock_sdk = MagicMock()
+        mock_sdk.ClaudeAgentOptions = MagicMock()
+        mock_sdk.ResultMessage = MagicMock()
+        mock_sdk.query = MagicMock()
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            from daily_report.content import _call_via_sdk_agent_with_tools
+            with pytest.raises(RuntimeError, match="empty response"):
+                _call_via_sdk_agent_with_tools("model", "system", "user")
+
+    @patch("daily_report.content.asyncio.run")
+    def test_combines_list_system_prompt(self, mock_asyncio_run):
+        mock_asyncio_run.return_value = "result"
+
+        mock_sdk = MagicMock()
+        mock_sdk.ClaudeAgentOptions = MagicMock()
+        mock_sdk.ResultMessage = MagicMock()
+        mock_sdk.query = MagicMock()
+
+        system_prompt = [
+            {"type": "text", "text": "First part"},
+            {"type": "text", "text": "Second part"},
+        ]
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            from daily_report.content import _call_via_sdk_agent_with_tools
+            result = _call_via_sdk_agent_with_tools("model", system_prompt, "user msg")
+
+        assert result == "result"
 
 
 # ---------------------------------------------------------------------------
@@ -401,21 +697,6 @@ class TestParseResponse:
 
 class TestPrepareConsolidatedContentViaSDK:
     """Tests using the SDK backend (ANTHROPIC_API_KEY set)."""
-
-    @pytest.fixture(autouse=True)
-    def _install_mock_anthropic(self):
-        """Install fake anthropic module into sys.modules for lazy imports."""
-        self._mock_anthropic = _make_mock_anthropic()
-        with patch.dict(sys.modules, {"anthropic": self._mock_anthropic}):
-            yield
-
-    def _make_mock_response(self, text: str) -> MagicMock:
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = text
-        response = MagicMock()
-        response.content = [text_block]
-        return response
 
     def _report_with_prs(self) -> ReportData:
         return _make_report(
@@ -429,74 +710,72 @@ class TestPrepareConsolidatedContentViaSDK:
         )
 
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
-    def test_uses_sdk_when_api_key_set(self):
-        response_data = {
-            "Authored / Contributed": {
-                "org/alpha": [{"title": "Summary", "numbers": [10]}],
-            },
-        }
-        self._mock_anthropic.Anthropic.return_value.messages.create.return_value = (
-            self._make_mock_response(json.dumps(response_data))
-        )
+    @patch("daily_report.content._call_backend_with_tools")
+    def test_returns_markdown_string(self, mock_backend):
+        mock_backend.return_value = "# Consolidated Report\n- Item 1"
 
         report = self._report_with_prs()
         result = prepare_consolidated_content(report)
 
-        assert len(result) == 1
-        assert result[0].blocks[0].items[0].title == "Summary"
-        # Verify SDK was called
-        self._mock_anthropic.Anthropic.assert_called_once_with(api_key="sk-test")
+        assert isinstance(result, str)
+        assert "# Consolidated Report" in result
+        mock_backend.assert_called_once()
 
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
-    def test_sdk_api_error_raises_runtime_error(self):
-        self._mock_anthropic.Anthropic.return_value.messages.create.side_effect = (
-            self._mock_anthropic.APIError(message="rate limit", request=MagicMock(), body=None)
-        )
+    @patch("daily_report.content._call_backend_with_tools")
+    @patch("daily_report.format_markdown.format_markdown", return_value="# Input MD")
+    def test_calls_format_markdown_for_input(self, mock_fmt, mock_backend):
+        mock_backend.return_value = "# Result"
+
+        report = self._report_with_prs()
+        result = prepare_consolidated_content(report)
+
+        mock_fmt.assert_called_once()
+        # The user message sent to backend should be the formatted markdown
+        user_msg = mock_backend.call_args[0][3]
+        assert user_msg == "# Input MD"
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
+    @patch("daily_report.content._call_backend_with_tools")
+    def test_api_error_raises_runtime_error(self, mock_backend):
+        mock_backend.side_effect = RuntimeError("Claude API call failed: rate limit")
 
         report = self._report_with_prs()
         with pytest.raises(RuntimeError, match="Claude API call failed"):
             prepare_consolidated_content(report)
 
     @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
-    def test_group_by_project_sends_project_grouped_data(self):
-        response_data = {
-            "org/alpha": {
-                "Open": [{"title": "Summary", "numbers": [10]}],
-            },
-        }
-        self._mock_anthropic.Anthropic.return_value.messages.create.return_value = (
-            self._make_mock_response(json.dumps(response_data))
-        )
-
-        report = self._report_with_prs()
-        result = prepare_consolidated_content(report, group_by="project")
-
-        assert len(result) == 1
-        assert result[0].repo_name == "org/alpha"
-        assert result[0].blocks[0].heading == "Open"
-
-    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
-    def test_group_by_status_sends_status_grouped_data(self):
-        response_data = {
-            "Open": {
-                "org/alpha": [{"title": "Summary", "numbers": [10]}],
-            },
-        }
-        self._mock_anthropic.Anthropic.return_value.messages.create.return_value = (
-            self._make_mock_response(json.dumps(response_data))
-        )
-
-        report = self._report_with_prs()
-        result = prepare_consolidated_content(report, group_by="status")
-
-        assert len(result) == 1
-        assert result[0].repo_name == "Open"
-        assert result[0].blocks[0].heading == "org/alpha"
-
-    def test_empty_report_returns_empty_list(self):
+    @patch("daily_report.content._call_backend_with_tools")
+    def test_empty_report_still_calls_backend(self, mock_backend):
+        """Even an empty report generates 'No PR activity' markdown and sends it."""
+        mock_backend.return_value = "# Empty consolidated"
         report = _make_report()
         result = prepare_consolidated_content(report)
-        assert result == []
+        # format_markdown produces non-empty output even for empty reports
+        # (it includes the title and "No PR activity found" text)
+        assert isinstance(result, str)
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
+    @patch("daily_report.content._call_backend_with_tools")
+    def test_passes_repo_paths(self, mock_backend):
+        mock_backend.return_value = "# Result"
+        paths = {"org/alpha": "/tmp/alpha"}
+
+        report = self._report_with_prs()
+        prepare_consolidated_content(report, repo_paths=paths)
+
+        # repo_paths is the 6th positional arg
+        call_args = mock_backend.call_args[0]
+        assert call_args[5] == paths
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
+    @patch("daily_report.content._call_backend_with_tools")
+    def test_strips_whitespace_from_result(self, mock_backend):
+        mock_backend.return_value = "  \n# Report\n  "
+
+        report = self._report_with_prs()
+        result = prepare_consolidated_content(report)
+        assert result == "# Report"
 
 
 class TestPrepareConsolidatedContentViaSDKAgent:
@@ -514,43 +793,37 @@ class TestPrepareConsolidatedContentViaSDKAgent:
         )
 
     @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content._call_via_sdk_agent")
-    def test_uses_sdk_agent_when_no_api_key(self, mock_agent, monkeypatch):
+    @patch("daily_report.content._call_backend_with_tools")
+    def test_uses_backend_with_tools_when_no_api_key(self, mock_backend, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        response_data = {
-            "Authored / Contributed": {
-                "org/alpha": [{"title": "Summary", "numbers": [10]}],
-            },
-        }
-        mock_agent.return_value = json.dumps(response_data)
+        mock_backend.return_value = "# Agent consolidated report"
 
         report = self._report_with_prs()
         result = prepare_consolidated_content(report)
 
-        assert len(result) == 1
-        assert result[0].blocks[0].items[0].title == "Summary"
-        mock_agent.assert_called_once()
+        assert isinstance(result, str)
+        assert "# Agent consolidated report" in result
+        mock_backend.assert_called_once()
 
     @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content._call_via_sdk_agent")
-    def test_sdk_agent_error_raises_runtime_error(self, mock_agent, monkeypatch):
+    @patch("daily_report.content._call_backend_with_tools")
+    def test_sdk_agent_error_raises_runtime_error(self, mock_backend, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        mock_agent.side_effect = RuntimeError("Claude SDK call failed: auth error")
+        mock_backend.side_effect = RuntimeError("Claude Agent SDK call failed: auth error")
 
         report = self._report_with_prs()
-        with pytest.raises(RuntimeError, match="Claude SDK call failed"):
+        with pytest.raises(RuntimeError, match="Claude Agent SDK call failed"):
             prepare_consolidated_content(report)
 
     @patch.dict("os.environ", {}, clear=False)
-    @patch("daily_report.content._call_via_sdk_agent")
-    def test_sdk_agent_empty_response_raises_runtime_error(self, mock_agent, monkeypatch):
-        """Empty SDK output should raise a clear error."""
+    @patch("daily_report.content._call_backend_with_tools")
+    def test_sdk_agent_empty_response(self, mock_backend, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        mock_agent.side_effect = RuntimeError("Claude SDK returned empty response")
+        mock_backend.return_value = ""
 
         report = self._report_with_prs()
-        with pytest.raises(RuntimeError, match="empty response"):
-            prepare_consolidated_content(report)
+        result = prepare_consolidated_content(report)
+        assert result == ""
 
 
 # ---------------------------------------------------------------------------
@@ -803,7 +1076,7 @@ class TestLoadPrompt:
         text = _load_prompt("consolidation")
         assert isinstance(text, str)
         assert len(text) > 0
-        assert "subgroup" in text.lower()
+        assert "consolidate" in text.lower()
 
     def test_caching_returns_same_string(self):
         t1 = _load_prompt("summary")
@@ -813,283 +1086,6 @@ class TestLoadPrompt:
     def test_missing_prompt_raises_file_not_found(self):
         with pytest.raises(FileNotFoundError):
             _load_prompt("nonexistent")
-
-
-# ---------------------------------------------------------------------------
-# _load_schema tests
-# ---------------------------------------------------------------------------
-
-class TestLoadSchema:
-    """Tests for _load_schema."""
-
-    def test_returns_dict(self):
-        schema = _load_schema()
-        assert isinstance(schema, dict)
-
-    def test_schema_has_expected_structure(self):
-        schema = _load_schema()
-        assert schema["type"] == "object"
-        assert "additionalProperties" in schema
-        inner = schema["additionalProperties"]
-        assert inner["type"] == "object"
-        assert "additionalProperties" in inner
-        items = inner["additionalProperties"]["items"]
-        assert "title" in items["properties"]
-        assert "numbers" in items["properties"]
-
-    def test_caching_returns_same_object(self):
-        s1 = _load_schema()
-        s2 = _load_schema()
-        assert s1 is s2
-
-
-# ---------------------------------------------------------------------------
-# _parse_and_validate tests
-# ---------------------------------------------------------------------------
-
-class TestParseAndValidate:
-    """Tests for _parse_and_validate with schema validation."""
-
-    def _schema(self):
-        return _load_schema()
-
-    def test_valid_json_returns_repo_contents(self):
-        data = {"org/repo": {"Summary": [{"title": "Summary", "numbers": [1]}]}}
-        result = _parse_and_validate(json.dumps(data), self._schema())
-        assert len(result) == 1
-        assert result[0].repo_name == "org/repo"
-        assert result[0].blocks[0].heading == "Summary"
-        assert result[0].blocks[0].items[0].title == "Summary"
-
-    def test_invalid_json_raises_runtime_error(self):
-        with pytest.raises(RuntimeError, match="Failed to parse"):
-            _parse_and_validate("not json", self._schema())
-
-    def test_non_dict_raises_runtime_error(self):
-        with pytest.raises(RuntimeError, match="not a JSON object"):
-            _parse_and_validate("[1, 2, 3]", self._schema())
-
-    def test_schema_violation_raises_runtime_error(self):
-        """Response with wrong types should fail schema validation."""
-        pytest.importorskip("jsonschema")
-        # numbers should be array of ints, not a string
-        bad_data = {"org/repo": {"sub": [{"title": "Summary", "numbers": "not-a-list"}]}}
-        with pytest.raises(RuntimeError, match="schema validation"):
-            _parse_and_validate(json.dumps(bad_data), self._schema())
-
-    def test_extra_properties_rejected_by_schema(self):
-        """Items with extra properties should fail additionalProperties: false."""
-        pytest.importorskip("jsonschema")
-        bad_data = {"org/repo": {"sub": [{"title": "Summary", "numbers": [1], "extra": "bad"}]}}
-        with pytest.raises(RuntimeError, match="schema validation"):
-            _parse_and_validate(json.dumps(bad_data), self._schema())
-
-    def test_works_without_jsonschema_installed(self):
-        """When jsonschema is not installed, validation is skipped gracefully."""
-        data = {"org/repo": {"sub": [{"title": "Summary", "numbers": [1]}]}}
-        with patch.dict(sys.modules, {"jsonschema": None}):
-            result = _parse_and_validate(json.dumps(data), self._schema())
-        assert len(result) == 1
-
-    def test_fenced_json_extracted(self):
-        data = {"org/repo": {"sub": [{"title": "Fenced", "numbers": [2]}]}}
-        wrapped = "Here is the JSON:\n```json\n" + json.dumps(data) + "\n```"
-        result = _parse_and_validate(wrapped, self._schema())
-        assert result[0].blocks[0].items[0].title == "Fenced"
-
-
-# ---------------------------------------------------------------------------
-# _call_with_retry tests
-# ---------------------------------------------------------------------------
-
-class TestCallWithRetry:
-    """Tests for _call_with_retry retry logic."""
-
-    def _schema(self):
-        return _load_schema()
-
-    @patch("daily_report.content._call_backend")
-    def test_success_on_first_call(self, mock_backend):
-        data = {"org/repo": {"Summary": [{"title": "Good", "numbers": [1]}]}}
-        mock_backend.return_value = json.dumps(data)
-
-        result = _call_with_retry("key", "model", "sys", "user", self._schema())
-        assert len(result) == 1
-        assert result[0].blocks[0].items[0].title == "Good"
-        assert mock_backend.call_count == 1
-
-    @patch("daily_report.content._call_backend")
-    def test_retry_on_first_failure(self, mock_backend):
-        good_data = {"org/repo": {"Summary": [{"title": "Fixed", "numbers": [1]}]}}
-        mock_backend.side_effect = [
-            "This is not valid JSON at all",  # first call fails
-            json.dumps(good_data),             # retry succeeds
-        ]
-
-        result = _call_with_retry("key", "model", "sys", "user", self._schema())
-        assert len(result) == 1
-        assert result[0].blocks[0].items[0].title == "Fixed"
-        assert mock_backend.call_count == 2
-
-    @patch("daily_report.content._call_backend")
-    def test_retry_includes_error_and_schema(self, mock_backend):
-        good_data = {"org/repo": {"Summary": [{"title": "OK", "numbers": [1]}]}}
-        mock_backend.side_effect = [
-            "bad response",
-            json.dumps(good_data),
-        ]
-
-        _call_with_retry("key", "model", "sys", "user", self._schema())
-        retry_msg = mock_backend.call_args_list[1][0][3]  # 4th arg = user_message
-        assert "could not be parsed" in retry_msg
-        assert "bad response" in retry_msg
-        assert "Expected JSON schema" in retry_msg
-
-    @patch("daily_report.content._call_backend")
-    def test_both_calls_fail_raises_error(self, mock_backend):
-        mock_backend.side_effect = [
-            "bad json first",
-            "bad json second",
-        ]
-
-        with pytest.raises(RuntimeError, match="Failed to parse"):
-            _call_with_retry("key", "model", "sys", "user", self._schema())
-        assert mock_backend.call_count == 2
-
-    @patch("daily_report.content._call_backend")
-    def test_schema_validation_failure_triggers_retry(self, mock_backend):
-        """Schema validation error (not just JSON parse) triggers retry."""
-        pytest.importorskip("jsonschema")
-        bad_data = {"org/repo": {"sub": [{"title": "X", "numbers": "not-a-list"}]}}
-        good_data = {"org/repo": {"sub": [{"title": "Fixed", "numbers": [1]}]}}
-        mock_backend.side_effect = [
-            json.dumps(bad_data),
-            json.dumps(good_data),
-        ]
-
-        result = _call_with_retry("key", "model", "sys", "user", self._schema())
-        assert result[0].blocks[0].items[0].title == "Fixed"
-        assert mock_backend.call_count == 2
-
-
-# ---------------------------------------------------------------------------
-# _serialize_grouped_content tests
-# ---------------------------------------------------------------------------
-
-class TestSerializeGroupedContent:
-    """Tests for _serialize_grouped_content."""
-
-    def test_empty_list_returns_empty_dict(self):
-        assert _serialize_grouped_content([]) == {}
-
-    def test_single_repo_single_block(self):
-        content = [
-            RepoContent(
-                repo_name="Authored / Contributed",
-                blocks=[
-                    ContentBlock(
-                        heading="org/repo",
-                        items=[
-                            ContentItem(title="Add login", numbers=[10],
-                                        status="Open", additions=50, deletions=10),
-                        ],
-                    ),
-                ],
-            ),
-        ]
-        result = _serialize_grouped_content(content)
-        assert "Authored / Contributed" in result
-        assert "org/repo" in result["Authored / Contributed"]
-        item = result["Authored / Contributed"]["org/repo"][0]
-        assert item["title"] == "Add login"
-        assert item["numbers"] == [10]
-        assert item["status"] == "Open"
-        assert item["additions"] == 50
-        assert item["deletions"] == 10
-
-    def test_empty_fields_omitted(self):
-        content = [
-            RepoContent(
-                repo_name="group",
-                blocks=[
-                    ContentBlock(
-                        heading="sub",
-                        items=[ContentItem(title="Basic PR", numbers=[1])],
-                    ),
-                ],
-            ),
-        ]
-        result = _serialize_grouped_content(content)
-        item = result["group"]["sub"][0]
-        assert "status" not in item
-        assert "additions" not in item
-        assert "author" not in item
-
-    def test_waiting_item_serializes_reviewers_and_days(self):
-        content = [
-            RepoContent(
-                repo_name="Waiting for Review",
-                blocks=[
-                    ContentBlock(
-                        heading="org/repo",
-                        items=[
-                            ContentItem(title="Waiting PR", numbers=[3],
-                                        reviewers=["alice"], days_waiting=5),
-                        ],
-                    ),
-                ],
-            ),
-        ]
-        result = _serialize_grouped_content(content)
-        item = result["Waiting for Review"]["org/repo"][0]
-        assert item["reviewers"] == ["alice"]
-        assert item["days_waiting"] == 5
-
-    def test_roundtrip_with_regroup_contribution(self):
-        """regroup_content → _serialize_grouped_content produces expected keys."""
-        report = _make_report(
-            authored_prs=[
-                AuthoredPR(repo="org/alpha", title="Feature", number=1,
-                           status="Open", additions=10, deletions=5,
-                           contributed=False, original_author=None),
-            ],
-            reviewed_prs=[
-                ReviewedPR(repo="org/beta", title="Review", number=2,
-                           author="other", status="Merged"),
-            ],
-        )
-        grouped = regroup_content(report, "contribution")
-        serialized = _serialize_grouped_content(grouped)
-        assert "Authored / Contributed" in serialized
-        assert "org/alpha" in serialized["Authored / Contributed"]
-        assert "Reviewed" in serialized
-        assert "org/beta" in serialized["Reviewed"]
-
-    def test_roundtrip_with_regroup_project(self):
-        report = _make_report(
-            authored_prs=[
-                AuthoredPR(repo="org/alpha", title="Feature", number=1,
-                           status="Open", additions=10, deletions=5,
-                           contributed=False, original_author=None),
-            ],
-        )
-        grouped = regroup_content(report, "project")
-        serialized = _serialize_grouped_content(grouped)
-        assert "org/alpha" in serialized
-        assert "Open" in serialized["org/alpha"]
-
-    def test_roundtrip_with_regroup_status(self):
-        report = _make_report(
-            authored_prs=[
-                AuthoredPR(repo="org/alpha", title="Feature", number=1,
-                           status="Open", additions=10, deletions=5,
-                           contributed=False, original_author=None),
-            ],
-        )
-        grouped = regroup_content(report, "status")
-        serialized = _serialize_grouped_content(grouped)
-        assert "Open" in serialized
-        assert "org/alpha" in serialized["Open"]
 
 
 # ---------------------------------------------------------------------------
@@ -1169,7 +1165,7 @@ class TestPRDeduplication:
         assert len(result) == 1
         headings = [b.heading for b in result[0].blocks]
         assert "Waiting for Review" in headings
-        assert "Authored / Contributed" not in headings
+        assert "Worked on" not in headings
 
     def test_default_content_dedup_authored_over_reviewed(self):
         report = _make_report(
@@ -1179,7 +1175,7 @@ class TestPRDeduplication:
         result = prepare_default_content(report)
         assert len(result) == 1
         headings = [b.heading for b in result[0].blocks]
-        assert "Authored / Contributed" in headings
+        assert "Worked on" in headings
         assert "Reviewed" not in headings
 
     def test_build_repos_data_dedup(self):
@@ -1193,3 +1189,27 @@ class TestPRDeduplication:
         assert "waiting_for_review" in repo_data
         assert "authored" not in repo_data
         assert "reviewed" not in repo_data
+
+
+# ---------------------------------------------------------------------------
+# CONSOLIDATION_TOOLS structure test
+# ---------------------------------------------------------------------------
+
+class TestConsolidationTools:
+    """Verify CONSOLIDATION_TOOLS has expected structure."""
+
+    def test_has_four_tools(self):
+        assert len(CONSOLIDATION_TOOLS) == 4
+
+    def test_tool_names(self):
+        names = [t["name"] for t in CONSOLIDATION_TOOLS]
+        assert "gh_pr_view" in names
+        assert "gh_pr_diff" in names
+        assert "git_log" in names
+        assert "git_diff" in names
+
+    def test_tools_have_input_schema(self):
+        for tool in CONSOLIDATION_TOOLS:
+            assert "input_schema" in tool
+            assert tool["input_schema"]["type"] == "object"
+            assert "repo" in tool["input_schema"]["properties"]

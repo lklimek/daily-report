@@ -584,7 +584,7 @@ class TestFormatSlidesSectionOmission:
     def test_has_authored_section(self):
         project_slide = self.prs.slides[1]
         text = project_slide.placeholders[1].text
-        assert "Authored" in text
+        assert "Worked on" in text
 
     def test_no_reviewed_section(self):
         project_slide = self.prs.slides[1]

@@ -837,15 +837,24 @@ def main():
         ),
     )
 
-    # Prepare content (default or consolidated)
+    # Always prepare default content first
+    from daily_report.content import regroup_content
+    report.content = regroup_content(report, args.group_by)
+
+    # Optionally consolidate via AI (markdown → Claude → markdown)
     if args.consolidate:
         from daily_report.content import prepare_consolidated_content
+
+        # Build repo_paths for local git tool access
+        repo_paths = {f"{r.org}/{r.name}": r.path for r in local_repos}
+
         try:
-            report.content = prepare_consolidated_content(
+            report.consolidated_markdown = prepare_consolidated_content(
                 report,
                 model=args.model or "claude-haiku-4-5-20251001",
                 prompt=cfg.consolidate_prompt or None,
                 group_by=args.group_by,
+                repo_paths=repo_paths,
             )
         except ImportError as e:
             missing = str(e)
@@ -868,9 +877,6 @@ def main():
         except RuntimeError as e:
             print(f"Error: consolidation failed: {e}", file=sys.stderr)
             sys.exit(1)
-    else:
-        from daily_report.content import regroup_content
-        report.content = regroup_content(report, args.group_by)
 
     # Prepare AI summary (replaces default summary stats)
     if args.summary:

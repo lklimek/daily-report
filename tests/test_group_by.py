@@ -107,7 +107,7 @@ class TestRegroupContribution:
 
     def test_top_level_groups(self):
         names = [rc.repo_name for rc in self.content]
-        assert names == ["Authored / Contributed", "Reviewed", "Waiting for Review"]
+        assert names == ["Worked on", "Reviewed", "Waiting for Review"]
 
     def test_authored_group_has_two_repos(self):
         authored = self.content[0]
@@ -284,10 +284,10 @@ class TestRegroupEmpty:
             ),
         )
 
-        # Contribution mode: only "Authored / Contributed" group
+        # Contribution mode: only "Worked on" group
         content = regroup_content(report, "contribution")
         names = [rc.repo_name for rc in content]
-        assert names == ["Authored / Contributed"]
+        assert names == ["Worked on"]
 
         # Project mode: only "org/alpha" group
         content = regroup_content(report, "project")
@@ -353,7 +353,7 @@ class TestFormatMarkdownContribution:
         self.md = format_markdown(self.report, group_by="contribution")
 
     def test_header_no_backticks(self):
-        assert "## Authored / Contributed" in self.md
+        assert "## Worked on" in self.md
         assert "## `Authored" not in self.md
 
     def test_block_heading_inline_label(self):
@@ -415,7 +415,7 @@ class TestFormatSlidesGroupBy:
             prs.slides[i].shapes.title.text
             for i in range(1, len(prs.slides) - 1)
         ]
-        assert "Authored / Contributed" in content_titles
+        assert "Worked on" in content_titles
         assert "Reviewed" in content_titles
         assert "Waiting for Review" in content_titles
 
@@ -449,7 +449,7 @@ class TestFormatSlackGroupBy:
         result = format_slack(report, group_by="contribution")
         texts = _all_section_texts(result["blocks"])
         combined = "\n".join(texts)
-        assert "*Authored / Contributed*" in combined
+        assert "*Worked on*" in combined
         assert "*`Authored" not in combined
 
     def test_project_mode_block_heading(self):

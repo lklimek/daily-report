@@ -402,7 +402,7 @@ class TestFormatSlackEmpty:
         result = format_slack(report)
         texts = _all_section_texts(result["blocks"])
         combined = "\n".join(texts)
-        assert "*Authored / Contributed*" in combined
+        assert "*Worked on*" in combined
         assert "*Reviewed*" not in combined
         assert "*Waiting for Review*" not in combined
 

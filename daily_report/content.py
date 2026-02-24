@@ -4,7 +4,7 @@ Transforms raw PR lists (authored_prs, reviewed_prs, waiting_prs) into
 renderer-agnostic RepoContent structures. Supports two modes:
 
 - prepare_default_content(): groups PRs by repo with semantic ContentItems
-- prepare_consolidated_content(): AI-powered summarisation via Claude API
+- prepare_consolidated_content(): AI consolidation via Claude API (markdown-in/out)
 - prepare_ai_summary(): AI-powered one-line summary (<320 chars)
 
 Authentication for consolidation (resolution order):
@@ -19,8 +19,8 @@ import asyncio
 import json
 import logging
 import os
-import re
-import sys
+import shlex
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
@@ -42,11 +42,12 @@ _SUMMARY_FORMAT = (
 )
 
 _CONSOLIDATION_FORMAT = (
-    "Reference PR numbers. Return valid JSON only, no markdown fences, no explanation. "
-    "Preserve the exact group and subgroup keys from the input in your output. "
-    'Format: {"group": {"subgroup": [{"title": "summary line", "numbers": [1,2,3]}, ...]}, ...}. '
-    "A JSON schema for the expected output will be provided alongside the data."
+    "Return ONLY the consolidated Markdown report. "
+    "Keep the same structure: # title, ## sections, - bullet items. "
+    "No preamble, no explanation outside the Markdown."
 )
+
+_TOOL_OUTPUT_MAX = 8000
 
 
 _prompt_cache: dict[str, str] = {}
@@ -61,6 +62,191 @@ def _load_prompt(name: str) -> str:
     return _prompt_cache[name]
 
 
+# ---------------------------------------------------------------------------
+# Tool definitions for consolidation
+# ---------------------------------------------------------------------------
+
+CONSOLIDATION_TOOLS: list[dict] = [
+    {
+        "name": "gh_pr_view",
+        "description": (
+            "View GitHub PR details (title, body, state, reviews, changed files). "
+            "Repo format: owner/name (e.g. 'octocat/hello-world')."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "number": {"type": "integer", "description": "PR number"},
+            },
+            "required": ["repo", "number"],
+        },
+    },
+    {
+        "name": "gh_pr_diff",
+        "description": (
+            "View the actual code diff of a GitHub PR. "
+            "Repo format: owner/name."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "number": {"type": "integer", "description": "PR number"},
+            },
+            "required": ["repo", "number"],
+        },
+    },
+    {
+        "name": "git_log",
+        "description": (
+            "View git commit history in a local repository. "
+            "Provide the repo name (owner/name) and optional git log arguments."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "args": {
+                    "type": "string",
+                    "description": "Additional git log arguments (e.g. '--oneline -20')",
+                    "default": "--oneline -20",
+                },
+            },
+            "required": ["repo"],
+        },
+    },
+    {
+        "name": "git_diff",
+        "description": (
+            "View diffs in a local repository. "
+            "Provide the repo name (owner/name) and optional git diff arguments."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "args": {
+                    "type": "string",
+                    "description": "Git diff arguments (e.g. 'HEAD~5..HEAD --stat')",
+                    "default": "HEAD~1",
+                },
+            },
+            "required": ["repo"],
+        },
+    },
+]
+
+
+def _truncate(text: str, max_len: int = _TOOL_OUTPUT_MAX) -> str:
+    """Truncate text with a note if it exceeds max_len."""
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + f"\n\n... (truncated, {len(text)} total chars)"
+
+
+def _exec_gh_pr_view(repo: str, number: int) -> str:
+    """Execute gh pr view and return output."""
+    cmd = [
+        "gh", "pr", "view", str(number),
+        "-R", repo,
+        "--json", "title,body,state,isDraft,additions,deletions,files,reviews,comments",
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return f"Error: {result.stderr.strip()[:500]}"
+        return _truncate(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return f"Error: {e}"
+
+
+def _exec_gh_pr_diff(repo: str, number: int) -> str:
+    """Execute gh pr diff and return output."""
+    cmd = ["gh", "pr", "diff", str(number), "-R", repo]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return f"Error: {result.stderr.strip()[:500]}"
+        return _truncate(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return f"Error: {e}"
+
+
+def _exec_git_log(repo: str, args: str, repo_paths: dict[str, str]) -> str:
+    """Execute git log on a local repo."""
+    path = repo_paths.get(repo)
+    if not path:
+        return f"Error: no local path for repo '{repo}'. Available: {list(repo_paths.keys())}"
+    try:
+        cmd = ["git", "-C", path, "log"] + shlex.split(args)
+    except ValueError as e:
+        return f"Error parsing args: {e}"
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return f"Error: {result.stderr.strip()[:500]}"
+        return _truncate(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return f"Error: {e}"
+
+
+def _exec_git_diff(repo: str, args: str, repo_paths: dict[str, str]) -> str:
+    """Execute git diff on a local repo."""
+    path = repo_paths.get(repo)
+    if not path:
+        return f"Error: no local path for repo '{repo}'. Available: {list(repo_paths.keys())}"
+    try:
+        cmd = ["git", "-C", path, "diff"] + shlex.split(args)
+    except ValueError as e:
+        return f"Error parsing args: {e}"
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return f"Error: {result.stderr.strip()[:500]}"
+        return _truncate(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return f"Error: {e}"
+
+
+def _execute_tool(
+    name: str, tool_input: dict, repo_paths: dict[str, str],
+) -> str:
+    """Dispatch a tool call to the appropriate executor."""
+    logger.debug("Executing tool %s with input: %s", name, tool_input)
+    if name == "gh_pr_view":
+        result = _exec_gh_pr_view(tool_input["repo"], tool_input["number"])
+    elif name == "gh_pr_diff":
+        result = _exec_gh_pr_diff(tool_input["repo"], tool_input["number"])
+    elif name == "git_log":
+        result = _exec_git_log(
+            tool_input["repo"],
+            tool_input.get("args", "--oneline -20"),
+            repo_paths,
+        )
+    elif name == "git_diff":
+        result = _exec_git_diff(
+            tool_input["repo"],
+            tool_input.get("args", "HEAD~1"),
+            repo_paths,
+        )
+    else:
+        result = f"Error: unknown tool '{name}'"
+    logger.debug("Tool %s result: %d chars", name, len(result))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PR deduplication
+# ---------------------------------------------------------------------------
 
 def _dedup_pr_lists(
     report: ReportData,
@@ -82,6 +268,10 @@ def _dedup_pr_lists(
 
     return authored_prs, reviewed_prs, report.waiting_prs
 
+
+# ---------------------------------------------------------------------------
+# Default content preparation
+# ---------------------------------------------------------------------------
 
 def prepare_default_content(report: ReportData) -> list[RepoContent]:
     """Build RepoContent list from raw PR lists, grouped by repo.
@@ -114,7 +304,7 @@ def prepare_default_content(report: ReportData) -> list[RepoContent]:
     for repo_name in all_repos:
         blocks: list[ContentBlock] = []
 
-        # Authored / Contributed
+        # Worked on
         authored = authored_by_repo.get(repo_name, [])
         if authored:
             items: list[ContentItem] = []
@@ -127,7 +317,7 @@ def prepare_default_content(report: ReportData) -> list[RepoContent]:
                     deletions=pr.deletions,
                     author=pr.original_author if pr.contributed else "",
                 ))
-            blocks.append(ContentBlock(heading="Authored / Contributed", items=items))
+            blocks.append(ContentBlock(heading="Worked on", items=items))
 
         # Reviewed
         reviewed = reviewed_by_repo.get(repo_name, [])
@@ -219,7 +409,7 @@ def _regroup_by_contribution(report: ReportData) -> list[RepoContent]:
     authored_prs, reviewed_prs, waiting_prs = _dedup_pr_lists(report)
     result: list[RepoContent] = []
 
-    # Authored / Contributed
+    # Worked on
     authored_by_repo: dict[str, list[ContentItem]] = defaultdict(list)
     for pr in authored_prs:
         authored_by_repo[pr.repo].append(_make_authored_item(pr))
@@ -228,7 +418,7 @@ def _regroup_by_contribution(report: ReportData) -> list[RepoContent]:
             ContentBlock(heading=repo, items=items)
             for repo, items in sorted(authored_by_repo.items())
         ]
-        result.append(RepoContent(repo_name="Authored / Contributed", blocks=blocks))
+        result.append(RepoContent(repo_name="Worked on", blocks=blocks))
 
     # Reviewed
     reviewed_by_repo: dict[str, list[ContentItem]] = defaultdict(list)
@@ -320,81 +510,49 @@ def _regroup_by_status(report: ReportData) -> list[RepoContent]:
     return result
 
 
-def _serialize_grouped_content(content: list[RepoContent]) -> dict:
-    """Convert RepoContent list to a nested dict for AI input.
-
-    Each RepoContent.repo_name → top key, each ContentBlock.heading → sub-key,
-    each ContentItem → serialized dict with non-empty fields only.
-    """
-    result: dict = {}
-    for rc in content:
-        group: dict = {}
-        for block in rc.blocks:
-            items: list[dict] = []
-            for item in block.items:
-                entry: dict = {"title": item.title}
-                if item.numbers:
-                    entry["numbers"] = item.numbers
-                if item.status:
-                    entry["status"] = item.status
-                if item.additions:
-                    entry["additions"] = item.additions
-                if item.deletions:
-                    entry["deletions"] = item.deletions
-                if item.author:
-                    entry["author"] = item.author
-                if item.reviewers:
-                    entry["reviewers"] = item.reviewers
-                if item.days_waiting:
-                    entry["days_waiting"] = item.days_waiting
-                items.append(entry)
-            if items:
-                group[block.heading] = items
-        if group:
-            result[rc.repo_name] = group
-    return result
-
+# ---------------------------------------------------------------------------
+# AI consolidation (markdown-in, tool use, markdown-out)
+# ---------------------------------------------------------------------------
 
 def prepare_consolidated_content(
     report: ReportData,
     model: str = "claude-haiku-4-5-20251001",
     prompt: str | None = None,
     group_by: str = "contribution",
-) -> list[RepoContent]:
-    """Build AI-consolidated RepoContent list using the Claude API.
+    repo_paths: dict[str, str] | None = None,
+) -> str:
+    """Consolidate the report via Claude API with tool use.
 
-    Groups PRs by repo, sends all repos in one Claude API call, and
-    returns summarised RepoContent objects.  On JSON parse/validation
-    failure, retries once with the error and the expected JSON schema.
-
-    Authentication: uses ANTHROPIC_API_KEY with the SDK when available,
-    otherwise falls back to the ``claude`` CLI (which handles subscription
-    and OAuth tokens natively).
+    Generates the default markdown report, sends it to Claude with tools
+    for deeper analysis (gh pr view/diff, git log/diff), and returns
+    the consolidated markdown.
 
     Args:
         report: Complete report data with populated PR lists.
-        model: Claude model ID or alias (e.g. "sonnet") for consolidation.
+        model: Claude model ID for consolidation.
         prompt: Custom system prompt. Uses default if None.
+        group_by: Grouping mode for the input markdown.
+        repo_paths: Map of "owner/name" → local filesystem path for git tools.
 
     Returns:
-        List of RepoContent objects with summarised content.
+        Consolidated markdown string.
 
     Raises:
         RuntimeError: If the API call fails or no auth method is available.
     """
-    grouped = regroup_content(report, group_by)
-    grouped_data = _serialize_grouped_content(grouped)
-    if not grouped_data:
-        logger.debug("No grouped data to consolidate — returning empty list")
-        return []
+    from daily_report.format_markdown import format_markdown
 
-    logger.debug(
-        "Consolidation input: %d groups, %d chars of JSON",
-        len(grouped_data),
-        len(json.dumps(grouped_data)),
-    )
+    # Generate default markdown as input
+    if not report.content:
+        report.content = regroup_content(report, group_by)
+    markdown_input = format_markdown(report, group_by=group_by)
 
-    schema = _load_schema()
+    if not markdown_input.strip():
+        logger.debug("No content to consolidate — returning empty string")
+        return ""
+
+    logger.debug("Consolidation input (%d chars):\n%s", len(markdown_input), markdown_input)
+
     if prompt:
         system_prompt: str | list[dict] = prompt
         logger.debug("Using custom consolidation prompt (%d chars)", len(prompt))
@@ -405,21 +563,28 @@ def prepare_consolidated_content(
         ]
         logger.debug("Using default consolidation prompt")
 
-    # Include schema in user message so the AI can self-validate
-    user_message = (
-        json.dumps(grouped_data, indent=2)
-        + "\n\n---\nExpected JSON schema for your response:\n"
-        + json.dumps(schema, indent=2)
-    )
-
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    effective_repo_paths = repo_paths or {}
     logger.debug(
-        "Auth method: %s, model: %s",
+        "Auth method: %s, model: %s, tools: %d, repo_paths: %d",
         "ANTHROPIC_API_KEY" if api_key else "claude-agent-sdk",
         model,
+        len(CONSOLIDATION_TOOLS),
+        len(effective_repo_paths),
     )
-    return _call_with_retry(api_key, model, system_prompt, user_message, schema)
 
+    text = _call_backend_with_tools(
+        api_key, model, system_prompt, markdown_input,
+        CONSOLIDATION_TOOLS, effective_repo_paths,
+    )
+    result = text.strip()
+    logger.debug("Consolidation output (%d chars):\n%s", len(result), result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# AI summary
+# ---------------------------------------------------------------------------
 
 def prepare_ai_summary(
     report: ReportData,
@@ -459,20 +624,55 @@ def prepare_ai_summary(
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     logger.debug(
-        "AI summary: auth=%s, model=%s, input=%d chars",
+        "AI summary input (auth=%s, model=%s, %d chars):\n%s",
         "ANTHROPIC_API_KEY" if api_key else "claude-agent-sdk",
         model,
         len(user_message),
+        user_message,
     )
     text = _call_backend(api_key, model, system_prompt, user_message)
-    logger.debug("AI summary response: %d chars", len(text.strip()))
-    return text.strip()
+    result = text.strip()
+    logger.debug("AI summary output (%d chars):\n%s", len(result), result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Backend callers
+# ---------------------------------------------------------------------------
+
+def _call_backend(
+    api_key: str, model: str, system_prompt: str | list[dict], user_message: str,
+) -> str:
+    """Call the AI backend (SDK or agent SDK) without tools."""
+    if api_key:
+        logger.debug("Using anthropic SDK backend (API key present)")
+        return _call_via_sdk(api_key, model, system_prompt, user_message)
+    logger.debug("No ANTHROPIC_API_KEY — falling back to Claude Agent SDK")
+    return _call_via_sdk_agent(model, system_prompt, user_message)
+
+
+def _call_backend_with_tools(
+    api_key: str,
+    model: str,
+    system_prompt: str | list[dict],
+    user_message: str,
+    tools: list[dict],
+    repo_paths: dict[str, str],
+) -> str:
+    """Call the AI backend with tool use support."""
+    if api_key:
+        logger.debug("Using anthropic SDK backend with tools (API key present)")
+        return _call_via_sdk_with_tools(
+            api_key, model, system_prompt, user_message, tools, repo_paths,
+        )
+    logger.debug("No ANTHROPIC_API_KEY — falling back to Claude Agent SDK with Bash")
+    return _call_via_sdk_agent_with_tools(model, system_prompt, user_message)
 
 
 def _call_via_sdk(
     api_key: str, model: str, system_prompt: str | list[dict], user_message: str,
 ) -> str:
-    """Call Claude via the anthropic Python SDK (API key auth)."""
+    """Call Claude via the anthropic Python SDK (API key auth), no tools."""
     import anthropic  # lazy import
 
     logger.debug("Calling Claude SDK (anthropic) with model=%s", model)
@@ -503,14 +703,94 @@ def _call_via_sdk(
     return text
 
 
+def _call_via_sdk_with_tools(
+    api_key: str,
+    model: str,
+    system_prompt: str | list[dict],
+    user_message: str,
+    tools: list[dict],
+    repo_paths: dict[str, str],
+    max_turns: int = 10,
+) -> str:
+    """Call Claude via anthropic SDK with tool use conversation loop.
+
+    Sends the initial message, then loops handling tool_use responses
+    until Claude returns a final text response (stop_reason == "end_turn").
+    """
+    import anthropic  # lazy import
+
+    logger.debug("Calling Claude SDK with tools, model=%s, max_turns=%d", model, max_turns)
+    client = anthropic.Anthropic(api_key=api_key)
+
+    messages: list[dict] = [{"role": "user", "content": user_message}]
+
+    for turn in range(max_turns):
+        logger.debug("Tool conversation turn %d", turn + 1)
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=4096,
+                timeout=120.0,
+                messages=messages,
+                system=system_prompt,
+                tools=tools,
+            )
+        except anthropic.APIError as e:
+            logger.debug("Claude SDK API error on turn %d: %s (%s)", turn + 1, type(e).__name__, e)
+            raise RuntimeError(f"Claude API call failed: {e}") from e
+
+        logger.debug(
+            "Turn %d response: stop=%s, blocks=%d, usage=in=%d/out=%d",
+            turn + 1,
+            response.stop_reason,
+            len(response.content),
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+        )
+
+        # If no tool use, extract text and return
+        if response.stop_reason == "end_turn":
+            text = ""
+            for block in response.content:
+                if block.type == "text":
+                    text += block.text
+            return text
+
+        # Handle tool_use blocks
+        tool_results = []
+        has_tool_use = False
+        for block in response.content:
+            if block.type == "tool_use":
+                has_tool_use = True
+                logger.debug("Tool call: %s(%s)", block.name, block.input)
+                result = _execute_tool(block.name, block.input, repo_paths)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+
+        if not has_tool_use:
+            # No tool use and not end_turn — extract whatever text we have
+            text = ""
+            for block in response.content:
+                if block.type == "text":
+                    text += block.text
+            return text
+
+        # Append assistant response and tool results to conversation
+        messages.append({"role": "assistant", "content": response.content})
+        messages.append({"role": "user", "content": tool_results})
+
+    raise RuntimeError(
+        f"Consolidation exceeded {max_turns} tool-use turns without completing"
+    )
+
+
 def _call_via_sdk_agent(
     model: str, system_prompt: str | list[dict], user_message: str,
 ) -> str:
-    """Call Claude via ``claude-agent-sdk`` (subscription / OAuth auth).
-
-    Uses the Claude Agent SDK which handles whatever authentication
-    the user has configured (subscription, OAuth token, etc.).
-    """
+    """Call Claude via ``claude-agent-sdk`` (subscription / OAuth auth), no tools."""
     logger.debug("Calling Claude Agent SDK with model=%s", model)
     from claude_agent_sdk import (  # lazy import
         ClaudeAgentOptions,
@@ -549,206 +829,55 @@ def _call_via_sdk_agent(
     return text
 
 
-_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n\s*```", re.DOTALL)
-
-
-_schema_cache: dict | None = None
-
-
-def _load_schema() -> dict:
-    """Load and cache the consolidation response JSON schema."""
-    global _schema_cache
-    if _schema_cache is None:
-        schema_path = Path(__file__).parent / "schemas" / "consolidation_response.json"
-        with open(schema_path) as f:
-            _schema_cache = json.load(f)
-    return _schema_cache
-
-
-def _call_backend(
-    api_key: str, model: str, system_prompt: str | list[dict], user_message: str,
+def _call_via_sdk_agent_with_tools(
+    model: str, system_prompt: str | list[dict], user_message: str,
 ) -> str:
-    """Call the AI backend (SDK or CLI) and return the raw text response."""
-    if api_key:
-        logger.debug("Using anthropic SDK backend (API key present)")
-        return _call_via_sdk(api_key, model, system_prompt, user_message)
-    logger.debug("No ANTHROPIC_API_KEY — falling back to Claude Agent SDK")
-    return _call_via_sdk_agent(model, system_prompt, user_message)
+    """Call Claude via ``claude-agent-sdk`` with Bash tool for gh/git commands.
 
-
-def _parse_and_validate(text: str, schema: dict) -> list[RepoContent]:
-    """Extract JSON from AI text, validate against schema, build RepoContent.
-
-    Raises RuntimeError if extraction or validation fails.
+    The agent SDK handles tool execution natively — we just allow the Bash
+    tool and let Claude run gh/git commands itself.
     """
-    logger.debug("Raw AI response (%d chars): %.500s", len(text), text)
-    stripped = _extract_json(text)
-    logger.debug("Extracted JSON (%d chars): %.500s", len(stripped), stripped)
+    logger.debug("Calling Claude Agent SDK with Bash tool, model=%s", model)
+    from claude_agent_sdk import (  # lazy import
+        ClaudeAgentOptions,
+        ResultMessage,
+        query,
+    )
 
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Failed to parse Claude response as JSON: {e}") from e
+    if isinstance(system_prompt, list):
+        system_text = "\n\n".join(block["text"] for block in system_prompt)
+    else:
+        system_text = system_prompt
+    full_prompt = f"{system_text}\n\n{user_message}"
+    logger.debug("Agent SDK prompt length: %d chars", len(full_prompt))
+    options = ClaudeAgentOptions(
+        model=model,
+        max_turns=10,
+        allowed_tools=["Bash"],
+    )
 
-    if not isinstance(parsed, dict):
-        raise RuntimeError(
-            f"Claude response is not a JSON object (got {type(parsed).__name__})"
-        )
+    async def _run() -> str:
+        result_text = ""
+        try:
+            async for message in query(prompt=full_prompt, options=options):
+                logger.debug("Agent SDK message: %s", type(message).__name__)
+                if isinstance(message, ResultMessage):
+                    result_text = message.result or ""
+        except Exception as e:
+            logger.debug("Agent SDK error: %s (%s)", type(e).__name__, e)
+            raise RuntimeError(f"Claude Agent SDK call failed: {e}") from e
+        return result_text
 
-    logger.debug("Parsed JSON: %d top-level keys: %s", len(parsed), list(parsed.keys()))
-
-    # Validate against schema if jsonschema is available
-    try:
-        import jsonschema
-        jsonschema.validate(instance=parsed, schema=schema)
-        logger.debug("Schema validation passed")
-    except ImportError:
-        logger.debug("jsonschema not installed — skipping validation")
-    except jsonschema.ValidationError as e:
-        raise RuntimeError(f"Response failed schema validation: {e.message}") from e
-
-    # Build RepoContent list from nested {group: {subgroup: [items]}}
-    result: list[RepoContent] = []
-    for group_name in sorted(parsed):
-        subgroups = parsed[group_name]
-        if not isinstance(subgroups, dict):
-            logger.debug("Skipping group %r: value is %s, not dict", group_name, type(subgroups).__name__)
-            continue
-        blocks: list[ContentBlock] = []
-        for subgroup_name in subgroups:
-            items_data = subgroups[subgroup_name]
-            if not isinstance(items_data, list):
-                logger.debug("Skipping subgroup %r/%r: value is %s, not list", group_name, subgroup_name, type(items_data).__name__)
-                continue
-            items: list[ContentItem] = []
-            for item in items_data:
-                if not isinstance(item, dict):
-                    continue
-                title = str(item.get("title", ""))[:500]
-                numbers = item.get("numbers", [])
-                if not isinstance(numbers, list):
-                    numbers = []
-                numbers = [n for n in numbers if isinstance(n, int)]
-                if title:
-                    items.append(ContentItem(title=title, numbers=numbers))
-            if items:
-                blocks.append(ContentBlock(heading=subgroup_name, items=items))
-        if blocks:
-            result.append(RepoContent(repo_name=group_name, blocks=blocks))
-
-    total_items = sum(len(block.items) for rc in result for block in rc.blocks)
-    logger.debug("Built %d RepoContent groups with %d total items", len(result), total_items)
-    return result
+    text = asyncio.run(_run())
+    if not text:
+        raise RuntimeError("Claude Agent SDK returned empty response")
+    logger.debug("Agent SDK response: %d chars", len(text))
+    return text
 
 
-def _call_with_retry(
-    api_key: str,
-    model: str,
-    system_prompt: str | list[dict],
-    user_message: str,
-    schema: dict,
-) -> list[RepoContent]:
-    """Call the AI backend and parse/validate the response.
-
-    On failure, retries once with the error message and expected schema
-    to give the AI a chance to correct its output.
-    """
-    logger.debug("Calling AI backend (attempt 1)")
-    text = _call_backend(api_key, model, system_prompt, user_message)
-    try:
-        result = _parse_and_validate(text, schema)
-        logger.debug("Parse/validate succeeded on first attempt")
-        return result
-    except RuntimeError as first_error:
-        logger.debug("First attempt failed: %s — retrying with correction prompt", first_error)
-        # Single retry with correction prompt
-        correction = (
-            "Your previous response could not be parsed. Error:\n"
-            f"{first_error}\n\n"
-            f"Your response (first 2000 chars):\n{text[:2000]}\n\n"
-            f"Expected JSON schema:\n{json.dumps(schema, indent=2)}\n\n"
-            "Return ONLY the corrected JSON — no markdown fences, "
-            "no explanation, no preamble."
-        )
-        logger.debug("Calling AI backend (attempt 2 — correction)")
-        retry_text = _call_backend(api_key, model, system_prompt, correction)
-        result = _parse_and_validate(retry_text, schema)
-        logger.debug("Parse/validate succeeded on retry")
-        return result
-
-
-def _extract_json(text: str) -> str:
-    """Extract a JSON object from an AI response.
-
-    Tries in order:
-    1. Direct parse of the full text (clean JSON response).
-    2. Extract content from markdown code fences (```json ... ```).
-    3. Find the first ``{`` and last ``}`` and try to parse that substring.
-    """
-    stripped = text.strip()
-
-    # 1. Try direct parse
-    try:
-        json.loads(stripped)
-        return stripped
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    # 2. Try extracting from markdown fences
-    match = _FENCED_JSON_RE.search(stripped)
-    if match:
-        return match.group(1).strip()
-
-    # 3. Find outermost braces
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start != -1 and end > start:
-        return stripped[start:end + 1]
-
-    # Give up — return original text so caller raises a clear error
-    return stripped
-
-
-def _parse_response(text: str) -> list[RepoContent]:
-    """Parse Claude's JSON response into RepoContent objects."""
-    stripped = _extract_json(text)
-
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Failed to parse Claude response as JSON: {e}") from e
-
-    if not isinstance(parsed, dict):
-        raise RuntimeError("Claude response is not a JSON object")
-
-    result: list[RepoContent] = []
-    for group_name in sorted(parsed):
-        subgroups = parsed[group_name]
-        if not isinstance(subgroups, dict):
-            continue
-        blocks: list[ContentBlock] = []
-        for subgroup_name in subgroups:
-            items_data = subgroups[subgroup_name]
-            if not isinstance(items_data, list):
-                continue
-            items: list[ContentItem] = []
-            for item in items_data:
-                if not isinstance(item, dict):
-                    continue
-                title = str(item.get("title", ""))[:500]
-                numbers = item.get("numbers", [])
-                if not isinstance(numbers, list):
-                    numbers = []
-                numbers = [n for n in numbers if isinstance(n, int)]
-                if title:
-                    items.append(ContentItem(title=title, numbers=numbers))
-            if items:
-                blocks.append(ContentBlock(heading=subgroup_name, items=items))
-        if blocks:
-            result.append(RepoContent(repo_name=group_name, blocks=blocks))
-
-    return result
-
+# ---------------------------------------------------------------------------
+# Helpers for AI summary
+# ---------------------------------------------------------------------------
 
 def _build_repos_data(report: ReportData) -> dict[str, dict[str, list[dict]]]:
     """Build a dict of repo -> categorized PR summaries for the AI prompt.

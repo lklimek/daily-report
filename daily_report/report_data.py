@@ -71,7 +71,7 @@ class ContentItem:
 
 @dataclass
 class ContentBlock:
-    """A group of items under a heading (e.g. 'Authored / Contributed')."""
+    """A group of items under a heading (e.g. 'Worked on')."""
     heading: str
     items: List[ContentItem] = field(default_factory=list)
 
@@ -97,3 +97,4 @@ class ReportData:
         themes=[], is_range=False,
     ))
     content: List[RepoContent] = field(default_factory=list)
+    consolidated_markdown: str = ""  # set by --consolidate; formatters use this when set

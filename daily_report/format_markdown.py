@@ -8,6 +8,9 @@ from daily_report.report_data import ContentItem, ReportData
 def format_markdown(report: ReportData, group_by: str = "project") -> str:
     """Render the report as a Markdown string.
 
+    If ``report.consolidated_markdown`` is set (from --consolidate),
+    returns it directly — the AI already produced the final markdown.
+
     Args:
         report: Complete report data with content already prepared.
         group_by: Grouping mode — "project", "status", or "contribution".
@@ -15,6 +18,9 @@ def format_markdown(report: ReportData, group_by: str = "project") -> str:
     Returns:
         The full Markdown report as a single string.
     """
+    if report.consolidated_markdown:
+        return report.consolidated_markdown
+
     lines: list[str] = []
     is_range = report.summary.is_range
 
