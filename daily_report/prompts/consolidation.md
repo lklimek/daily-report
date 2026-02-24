@@ -22,5 +22,6 @@ context. Don't call tools for every PR.
 - Preserve Markdown PR links from the input (e.g. `[#123](https://github.com/org/repo/pull/123)`)
 - Use past tense for merged work, present progressive for in-progress
 - Reviewed PRs are NOT the user's own work — skip or mention briefly
+- For "Waiting for Review" items, always show WHO we are waiting for (reviewer names) and how long
 - Keep each bullet under 200 characters (excluding link URLs — only count the visible text)
 - Drop less significant items if a section exceeds 5 bullets
