@@ -19,8 +19,8 @@ context. Don't call tools for every PR.
 
 - Keep the same Markdown structure: `# Title`, `## Sections`, `- Bullet items`
 - Merge related PRs into 2-5 bullet points per section
-- Reference PR numbers inline (e.g. #123, #456)
+- Preserve Markdown PR links from the input (e.g. `[#123](https://github.com/org/repo/pull/123)`)
 - Use past tense for merged work, present progressive for in-progress
 - Reviewed PRs are NOT the user's own work — skip or mention briefly
-- Keep each bullet under 200 characters
+- Keep each bullet under 200 characters (excluding link URLs — only count the visible text)
 - Drop less significant items if a section exceeds 5 bullets

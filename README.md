@@ -100,7 +100,7 @@ python -m daily_report --consolidate --summary --model claude-haiku-4-5-20251001
 | `--waiting-days` | `365` | Max age (days) for "Waiting for review" PRs; hides PRs waiting longer than this (minimum: 1) |
 | `--consolidate` | `false` | Consolidate the report into AI-generated summaries (uses tool calls for deeper context) |
 | `--summary` | `false` | Replace default summary stats with a short AI-generated summary (<160 chars) |
-| `--model` | `claude-sonnet-4-5-20250929` | Claude model for AI features (requires `--consolidate` or `--summary`) |
+| `--model` | `claude-haiku-4-5-20251001` | Claude model for AI features (requires `--consolidate` or `--summary`) |
 
 `--date` and `--from`/`--to` are mutually exclusive. When neither is provided, defaults to today.
 
