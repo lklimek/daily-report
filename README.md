@@ -98,7 +98,7 @@ python -m daily_report --consolidate --summary --model claude-haiku-4-5-20251001
 | `--slack` | `false` | Post report to Slack via Incoming Webhook instead of Markdown output |
 | `--slack-webhook` | *(env var or config)* | Slack webhook URL (requires `--slack`); falls back to `SLACK_WEBHOOK_URL` env var or `slack_webhook` in config file |
 | `--waiting-days` | `365` | Max age (days) for "Waiting for review" PRs; hides PRs waiting longer than this (minimum: 1) |
-| `--consolidate` | `false` | Consolidate PR lists into AI-generated summaries per repository |
+| `--consolidate` | `false` | Consolidate the report into AI-generated summaries (uses tool calls for deeper context) |
 | `--summary` | `false` | Replace default summary stats with a short AI-generated summary (<160 chars) |
 | `--model` | `claude-sonnet-4-5-20250929` | Claude model for AI features (requires `--consolidate` or `--summary`) |
 
@@ -163,7 +163,7 @@ repos:
 
 ### Consolidation (`--consolidate`)
 
-Replaces per-PR bullet points with AI-generated summaries that describe the purpose and goals of work per repository. Useful when activity reports become long — the AI distils multiple PRs into 2-5 concise bullet points per repo, referencing PR numbers.
+Sends the default Markdown report to Claude, which can use tools (`gh pr view`, `gh pr diff`, `git log`, `git diff`) to gather additional context, then produces a consolidated summary. Useful when activity reports become long — the AI distils multiple PRs into 2-5 concise bullet points per section, referencing PR numbers. Use `-v` to see the full input/output exchanged with Claude.
 
 ### Summary (`--summary`)
 
@@ -182,7 +182,7 @@ pip install anthropic
 Two backends are supported:
 
 1. **`ANTHROPIC_API_KEY`** environment variable — uses the `anthropic` Python SDK directly
-2. **Claude CLI** (`claude`) — if no API key is set, falls back to the `claude` CLI which handles authentication natively (subscription, OAuth token, etc.)
+2. **Claude Agent SDK** (`claude-agent-sdk`) — if no API key is set, falls back to the Claude Agent SDK which handles authentication natively (subscription, OAuth token, etc.)
 
 For subscription users with Claude Code already installed, AI features work out of the box with no extra configuration.
 
@@ -233,7 +233,7 @@ The tool uses a four-phase pipeline:
 1. **Local git commit discovery** — scans locally cloned repos for commits by the user within the date range, then maps commits to PRs via commit message parsing and GraphQL batch queries. Falls back to GraphQL search for repos not cloned locally.
 2. **Review discovery** — a single GraphQL search finds PRs where the user has review or comment activity, with inline date verification.
 3. **PR enrichment** — a batch GraphQL query fetches details (state, merged date, additions/deletions) for all discovered PRs in one call.
-4. **Content preparation** — groups PRs by repository into renderer-agnostic content blocks. With `--consolidate`, sends PR data to the Claude API for AI-powered summarisation instead of listing individual PRs.
+4. **Content preparation** — groups PRs by repository into renderer-agnostic content blocks. With `--consolidate`, generates Markdown and sends it to Claude (with tool use for deeper context) for AI-powered consolidation.
 
 This replaces the previous approach of ~100 individual REST API calls with ~5-7 GraphQL calls, reducing runtime from ~50 seconds to ~7 seconds. Local git discovery also catches PRs that the API search misses (e.g., bot-authored PRs where the user has commits).
 
