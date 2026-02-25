@@ -10,4 +10,5 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+clear
 exec python3 -m daily_report "$@"
