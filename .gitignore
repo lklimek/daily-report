@@ -4,6 +4,7 @@ __pycache__/
 
 # Generated output
 *.pptx
+presentations/*/
 
 # Config files that may contain secrets
 .env

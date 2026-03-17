@@ -86,7 +86,7 @@ def _make_model_entry() -> dict:
 
 
 def _make_agent_entry() -> dict:
-    return {"input": 0, "output": 0, "messages": 0, "sessions": 0}
+    return {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0, "messages": 0, "sessions": 0}
 
 
 def process_jsonl(
@@ -133,6 +133,8 @@ def process_jsonl(
             ae = agent_stats[agent_type]
             ae["input"] += inp
             ae["output"] += out
+            ae["cache_creation"] += cc
+            ae["cache_read"] += cr
             ae["messages"] += 1
             count += 1
     except Exception:
@@ -158,7 +160,10 @@ def collect(
     for proj in sorted(projects_dir.iterdir()):
         if not proj.is_dir():
             continue
-        if project_filter and project_filter.lower() not in proj.name.lower():
+        if project_filter and not any(
+            term.strip().lower() in proj.name.lower()
+            for term in project_filter.split("|")
+        ):
             continue
 
         for item in proj.iterdir():
@@ -255,7 +260,7 @@ def collect(
 
 def format_human(data: dict) -> str:
     t = data["totals"]
-    total_tokens = t["input_tokens"] + t["output_tokens"]
+    total_tokens = t["input_tokens"] + t["output_tokens"] + t["cache_creation_tokens"] + t["cache_read_tokens"]
     lines = [
         f"Claude Code Agent Stats -- {data['date_from']} to {data['date_to']}",
         "=" * 51,
@@ -266,18 +271,22 @@ def format_human(data: dict) -> str:
         f"  Tool calls:    {t['tool_calls']:,}",
         f"  Input tokens:  {fmt_tokens(t['input_tokens'])}",
         f"  Output tokens: {fmt_tokens(t['output_tokens'])}",
+        f"  Cache create:  {fmt_tokens(t['cache_creation_tokens'])}",
+        f"  Cache read:    {fmt_tokens(t['cache_read_tokens'])}",
         f"  Total tokens:  {fmt_tokens(total_tokens)}",
         "",
         "By Model",
     ]
     for model, vals in data["by_model"].items():
+        model_total = vals["input"] + vals["output"] + vals["cache_creation"] + vals["cache_read"]
         lines.append(
-            f"  {model:<40} {fmt_tokens(vals['input']):>8} input"
-            f"  {fmt_tokens(vals['output']):>8} output"
+            f"  {model:<40} {fmt_tokens(model_total):>8} total"
+            f"  ({fmt_tokens(vals['input'])} in + {fmt_tokens(vals['output'])} out"
+            f" + {fmt_tokens(vals['cache_creation'])} cc + {fmt_tokens(vals['cache_read'])} cr)"
         )
     lines += ["", "By Agent Type"]
     for agent, vals in data["by_agent"].items():
-        agent_total = vals["input"] + vals["output"]
+        agent_total = vals["input"] + vals["output"] + vals.get("cache_creation", 0) + vals.get("cache_read", 0)
         lines.append(
             f"  {agent:<38} {vals['sessions']:>4} sessions"
             f"  {fmt_tokens(agent_total):>8} tokens"
@@ -287,7 +296,7 @@ def format_human(data: dict) -> str:
 
 def format_presentation(data: dict) -> str:
     t = data["totals"]
-    total_tokens = t["input_tokens"] + t["output_tokens"]
+    total_tokens = t["input_tokens"] + t["output_tokens"] + t["cache_creation_tokens"] + t["cache_read_tokens"]
     agent_count = len(data["by_agent"])
 
     # Top named agents (exclude orchestrator/subagent placeholders)
