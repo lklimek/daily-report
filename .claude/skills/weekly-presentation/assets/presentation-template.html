@@ -206,7 +206,13 @@
     color: #79c0ff;
   }
 
-  /* -- Two-column layout (stats slide) ---------------------------------- */
+  /* -- Multi-column layout (stats slide) -------------------------------- */
+  .three-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 24px;
+    margin-top: 12px;
+  }
   .two-col {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -220,12 +226,12 @@
     padding: 28px 32px;
   }
   .col-card h3 {
+    font-size: 0.8rem;
     font-weight: 700;
     color: var(--accent);
     margin-bottom: 16px;
     letter-spacing: 0.02em;
     text-transform: uppercase;
-    font-size: 0.8rem;
   }
   .stat-row {
     display: flex;
@@ -490,62 +496,62 @@
       </div>
     </section>
 
-    3. STATS / CLOSING SLIDE (two-column cards with donut chart):
+    3. CLOSING SLIDE (three-column with donut charts):
     Donut chart math: circumference = 2*pi*r (r=44 => 276.46).
     Each segment: stroke-dasharray="ARC CIRCUMFERENCE", rotated by cumulative prior angle.
     Rotation formula: -90 + (prior_sum / total) * 360
+    Legend counts include space-padded percentage: "799M (29%)", "2.3B (82%)", "224M ( 8%)"
     <section class="slide" data-index="N">
       <div class="slide-inner">
-        <h2 class="slide-heading">By the Numbers &amp; What's Coming</h2>
-        <div class="two-col">
+        <h2 class="slide-heading">By the Numbers</h2>
+        <div class="three-col">
           <div class="col-card">
-            <h3>Shipped this sprint</h3>
+            <h3>Pull Requests</h3>
             <div class="donut-wrap">
-              <svg width="120" height="120" viewBox="0 0 120 120" aria-label="PR breakdown donut chart">
+              <svg width="180" height="180" viewBox="0 0 120 120" aria-label="PR breakdown">
                 <circle cx="60" cy="60" r="44" fill="none" stroke="#21262d" stroke-width="14"/>
-                <!-- Segment 1: N1/total * 276.46, rotate(-90 60 60) -->
                 <circle cx="60" cy="60" r="44" fill="none" stroke="#008DE4" stroke-width="14"
                   stroke-dasharray="ARC1 276.46" transform="rotate(-90 60 60)"/>
-                <!-- Segment 2: N2/total * 276.46, rotate(DEG2 60 60) -->
                 <circle cx="60" cy="60" r="44" fill="none" stroke="#a371f7" stroke-width="14"
                   stroke-dasharray="ARC2 276.46" transform="rotate(DEG2 60 60)"/>
-                <!-- Segment 3: N3/total * 276.46, rotate(DEG3 60 60) -->
                 <circle cx="60" cy="60" r="44" fill="none" stroke="#8b949e" stroke-width="14"
                   stroke-dasharray="ARC3 276.46" transform="rotate(DEG3 60 60)"/>
-                <text x="60" y="56" text-anchor="middle" fill="#e6edf3" font-size="22" font-weight="800" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">TOTAL</text>
-                <text x="60" y="72" text-anchor="middle" fill="#8b949e" font-size="9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">PRs</text>
+                <text x="60" y="56" text-anchor="middle" fill="#e6edf3" font-size="22" font-weight="800"
+                  font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">TOTAL</text>
+                <text x="60" y="72" text-anchor="middle" fill="#8b949e" font-size="9"
+                  font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">PRs</text>
               </svg>
               <div class="donut-legend">
                 <div class="legend-row">
                   <span class="legend-dot" style="background:#008DE4"></span>
-                  <span>Category one</span>
-                  <span class="legend-count">N1</span>
+                  <span>Direct contributions</span>
+                  <span class="legend-count">N1 (XX%)</span>
                 </div>
                 <div class="legend-row">
                   <span class="legend-dot" style="background:#a371f7"></span>
-                  <span>Category two</span>
-                  <span class="legend-count">N2</span>
+                  <span>AI agent PRs</span>
+                  <span class="legend-count">N2 (XX%)</span>
                 </div>
                 <div class="legend-row">
                   <span class="legend-dot" style="background:#8b949e"></span>
-                  <span>Category three</span>
-                  <span class="legend-count">N3</span>
+                  <span>Dependency updates</span>
+                  <span class="legend-count">N3 (XX%)</span>
                 </div>
               </div>
             </div>
             <p class="stat-breakdown" style="margin-top:0">across <span>N</span> repos</p>
           </div>
           <div class="col-card">
-            <h3>Coming soon</h3>
-            <ul class="coming-list">
-              <li><span class="coming-dot"></span> Item</li>
-            </ul>
-            <div class="roadmap-placeholder">
-              Placeholder text
-            </div>
+            <h3>AI Agent Activity</h3>
+            <!-- Same donut pattern (180x180), tokens in center, agent names + percentages in legend -->
+          </div>
+          <div class="col-card">
+            <h3>Models</h3>
+            <!-- Same donut pattern (180x180), model names + percentages in legend -->
           </div>
         </div>
       </div>
+      <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
     </section>
   -->
 
