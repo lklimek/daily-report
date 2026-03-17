@@ -14,7 +14,7 @@ Generate a self-contained HTML slide deck summarizing PR activity from `daily-re
 
 ```bash
 cd /home/ubuntu/git/daily-report
-python -m daily_report --from YYYY-MM-DD --to YYYY-MM-DD --consolidate --repos-dir /home/ubuntu/git --org dashpay
+python -m daily_report --from YYYY-MM-DD --to YYYY-MM-DD --repos-dir /home/ubuntu/git --org dashpay
 ```
 
 - Default scope: `dashpay` org only. Broaden only if user explicitly asks.
