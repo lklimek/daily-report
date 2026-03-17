@@ -18,7 +18,8 @@ python -m daily_report --from YYYY-MM-DD --to YYYY-MM-DD --repos-dir /home/ubunt
 ```
 
 - Default scope: `dashpay` org only. Broaden only if user explicitly asks.
-- Default date range: last 7 days if not specified.
+- Default date range: last 2 weeks, **Wednesday to Tuesday** (sprint cycle). Calculate the most recent past Tuesday as `--to`, two Wednesdays back as `--from`.
+- **Exclude stale PRs**: Only include PRs that had actual activity (commits, reviews, status changes) within the date range. PRs that were merely open/waiting with no activity during the period must be excluded — they clutter the presentation with non-progress.
 - Skip if report output is already provided.
 
 ### Phase 1b: Gather AI Agent Stats
