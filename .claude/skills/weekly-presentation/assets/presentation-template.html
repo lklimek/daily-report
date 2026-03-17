@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d1117;
+    --accent: #008DE4;
+    --accent-dim: rgba(0, 141, 228, 0.12);
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --subtle: #21262d;
+    --border: #30363d;
+    --code-bg: #161b22;
+    --transition: 480ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 18px;
+    line-height: 1.6;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* -- Deck container --------------------------------------------------- */
+  #deck {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* -- Slides ----------------------------------------------------------- */
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 60px 80px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(60px);
+    transition: opacity var(--transition), transform var(--transition);
+    will-change: opacity, transform;
+  }
+  .slide.active {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+  }
+  .slide.exit-left {
+    opacity: 0;
+    transform: translateX(-60px);
+    pointer-events: none;
+  }
+
+  /* -- Slide inner layout ----------------------------------------------- */
+  .slide-inner {
+    width: 100%;
+    max-width: 1320px;
+  }
+
+  /* -- Title slide ------------------------------------------------------ */
+  .slide-title {
+    text-align: center;
+  }
+  .dash-logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 48px;
+  }
+  .dash-logo-mark {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dash-logo-mark svg {
+    width: 36px;
+    height: 36px;
+    fill: #fff;
+  }
+  .dash-logo-text {
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+  }
+  .slide-title h1 {
+    font-size: clamp(2.4rem, 4vw, 3.6rem);
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    margin-bottom: 24px;
+  }
+  .slide-title .meta {
+    font-size: 1.1rem;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+  }
+  .title-rule {
+    width: 80px;
+    height: 4px;
+    background: var(--accent);
+    border-radius: 2px;
+    margin: 32px auto 0;
+  }
+
+  /* -- Content slides --------------------------------------------------- */
+  .slide-heading {
+    font-size: clamp(1.8rem, 3vw, 2.8rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .slide-subheading {
+    font-size: 0.95rem;
+    font-style: italic;
+    color: var(--muted);
+    margin-bottom: 36px;
+  }
+  .slide-subheading strong {
+    font-style: normal;
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  /* -- Bullet list ------------------------------------------------------ */
+  .bullets {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .bullets li {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    font-size: 1rem;
+    color: #c9d1d9;
+    line-height: 1.65;
+  }
+  .bullet-dot {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-top: 9px;
+  }
+  .bullet-body {
+    flex: 1;
+  }
+  .bullet-lead {
+    font-weight: 700;
+    color: var(--accent);
+  }
+  /* PR links */
+  .pr-links {
+    display: inline;
+    margin-left: 6px;
+  }
+  .pr-links a {
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-decoration: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-left: 3px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  .pr-links a:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  /* Monospace inline */
+  code {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: #79c0ff;
+  }
+
+  /* -- Two-column layout (stats slide) ---------------------------------- */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    margin-top: 12px;
+  }
+  .col-card {
+    background: var(--subtle);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+  }
+  .col-card h3 {
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 16px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+  }
+  .stat-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .stat-number {
+    font-size: 3.2rem;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: 1rem;
+    color: var(--muted);
+  }
+  .stat-breakdown {
+    font-size: 0.88rem;
+    color: var(--muted);
+    line-height: 1.7;
+    margin-top: 4px;
+  }
+  .stat-breakdown span {
+    color: #c9d1d9;
+  }
+  .coming-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .coming-list li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.95rem;
+    color: #c9d1d9;
+  }
+  .coming-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+  .roadmap-placeholder {
+    margin-top: 20px;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-style: italic;
+    text-align: center;
+  }
+
+  /* -- Navigation ------------------------------------------------------- */
+  .nav-zone {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: 72px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    opacity: 0;
+    transition: opacity 0.25s;
+  }
+  .nav-zone:hover { opacity: 1; }
+  .nav-zone.nav-prev { left: 0; }
+  .nav-zone.nav-next { right: 0; }
+  .nav-arrow {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+  }
+  .nav-arrow svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .nav-zone:hover .nav-arrow {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
+  /* Progress dots */
+  #dots {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    z-index: 60;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+    cursor: pointer;
+    transition: background 0.25s, transform 0.25s;
+  }
+  .dot.active {
+    background: var(--accent);
+    transform: scale(1.3);
+  }
+
+  /* Slide counter */
+  #counter {
+    position: fixed;
+    bottom: 24px;
+    right: 32px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    z-index: 60;
+  }
+
+  /* Keyboard focus */
+  .nav-zone:focus-visible .nav-arrow,
+  .dot:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* -- Status badges ---------------------------------------------------- */
+  .status-badge {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+  }
+  .badge-merged { background: #238636; color: #fff; }
+  .badge-open { background: transparent; border: 1px solid #238636; color: #3fb950; }
+  .badge-draft { background: #30363d; color: #8b949e; }
+  .badge-waiting { background: #d29922; color: #1c1e21; }
+
+  /* -- Donut chart (stats slide) ---------------------------------------- */
+  .donut-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .donut-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 12px;
+    width: 100%;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .legend-count {
+    margin-left: auto;
+    font-weight: 700;
+    color: #c9d1d9;
+  }
+</style>
+</head>
+<body>
+
+<div id="deck">
+
+  <!--
+    SLIDE CONTENT GOES HERE.
+
+    Each slide is a <section class="slide" data-index="N"> where N starts at 0.
+    The first slide must have class="slide active".
+
+    === SLIDE TYPES ===
+
+    1. TITLE SLIDE:
+    <section class="slide active" data-index="0">
+      <div class="slide-inner slide-title">
+        <div class="dash-logo">
+          <div class="dash-logo-mark">
+            <svg viewBox="0 0 550 550" xmlns="http://www.w3.org/2000/svg">
+              <path d="M354.55,66.65H167.65l-15.5,86.6,168.7.2c83.1,0,107.6,30.2,106.9,80.2-.4,25.6-11.5,69-16.3,83.1-12.8,37.5-39.1,80.2-137.7,80.1l-164-.1-15.5,86.7h186.5c65.8,0,93.7-7.7,123.4-21.3,65.7-30.5,104.8-95.3,120.5-179.9,23.3-126-5.7-215.6-170.1-215.6"/>
+              <path d="M87,231.55c-49,0-56,31.9-60.6,51.2-6.1,25.2-8.1,35.5-8.1,35.5h191.4c49,0,56-31.9,60.6-51.2,6.1-25.2,8.1-35.5,8.1-35.5Z"/>
+            </svg>
+          </div>
+          <span class="dash-logo-text">DASH</span>
+        </div>
+        <h1>Main Headline Here</h1>
+        <p class="meta">Date Range &middot; Author Name</p>
+        <div class="title-rule"></div>
+      </div>
+    </section>
+
+    2. CONTENT SLIDE (bullets with PR links and status badges):
+    <section class="slide" data-index="N">
+      <div class="slide-inner">
+        <h2 class="slide-heading">Slide Title</h2>
+        <p class="slide-subheading"><strong>Who benefits:</strong> Target audience</p>
+        <ul class="bullets">
+          <li>
+            <span class="bullet-dot"></span>
+            <span class="bullet-body">
+              <span class="bullet-lead">Bold lead-in</span> — Description text here.
+              <span class="pr-links"><a href="URL" target="_blank">#123</a></span>
+              <span class="status-badge badge-merged">merged</span>
+            </span>
+          </li>
+        </ul>
+        <!-- Status badge types:
+          <span class="status-badge badge-merged">merged</span>   — green solid, shipped
+          <span class="status-badge badge-open">open</span>       — green outline, open PR
+          <span class="status-badge badge-waiting">waiting</span> — amber, awaiting review
+          <span class="status-badge badge-draft">draft</span>     — gray, in progress
+        -->
+      </div>
+    </section>
+
+    3. STATS / CLOSING SLIDE (two-column cards with donut chart):
+    Donut chart math: circumference = 2*pi*r (r=44 => 276.46).
+    Each segment: stroke-dasharray="ARC CIRCUMFERENCE", rotated by cumulative prior angle.
+    Rotation formula: -90 + (prior_sum / total) * 360
+    <section class="slide" data-index="N">
+      <div class="slide-inner">
+        <h2 class="slide-heading">By the Numbers &amp; What's Coming</h2>
+        <div class="two-col">
+          <div class="col-card">
+            <h3>Shipped this sprint</h3>
+            <div class="donut-wrap">
+              <svg width="120" height="120" viewBox="0 0 120 120" aria-label="PR breakdown donut chart">
+                <circle cx="60" cy="60" r="44" fill="none" stroke="#21262d" stroke-width="14"/>
+                <!-- Segment 1: N1/total * 276.46, rotate(-90 60 60) -->
+                <circle cx="60" cy="60" r="44" fill="none" stroke="#008DE4" stroke-width="14"
+                  stroke-dasharray="ARC1 276.46" transform="rotate(-90 60 60)"/>
+                <!-- Segment 2: N2/total * 276.46, rotate(DEG2 60 60) -->
+                <circle cx="60" cy="60" r="44" fill="none" stroke="#a371f7" stroke-width="14"
+                  stroke-dasharray="ARC2 276.46" transform="rotate(DEG2 60 60)"/>
+                <!-- Segment 3: N3/total * 276.46, rotate(DEG3 60 60) -->
+                <circle cx="60" cy="60" r="44" fill="none" stroke="#8b949e" stroke-width="14"
+                  stroke-dasharray="ARC3 276.46" transform="rotate(DEG3 60 60)"/>
+                <text x="60" y="56" text-anchor="middle" fill="#e6edf3" font-size="22" font-weight="800" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">TOTAL</text>
+                <text x="60" y="72" text-anchor="middle" fill="#8b949e" font-size="9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">PRs</text>
+              </svg>
+              <div class="donut-legend">
+                <div class="legend-row">
+                  <span class="legend-dot" style="background:#008DE4"></span>
+                  <span>Category one</span>
+                  <span class="legend-count">N1</span>
+                </div>
+                <div class="legend-row">
+                  <span class="legend-dot" style="background:#a371f7"></span>
+                  <span>Category two</span>
+                  <span class="legend-count">N2</span>
+                </div>
+                <div class="legend-row">
+                  <span class="legend-dot" style="background:#8b949e"></span>
+                  <span>Category three</span>
+                  <span class="legend-count">N3</span>
+                </div>
+              </div>
+            </div>
+            <p class="stat-breakdown" style="margin-top:0">across <span>N</span> repos</p>
+          </div>
+          <div class="col-card">
+            <h3>Coming soon</h3>
+            <ul class="coming-list">
+              <li><span class="coming-dot"></span> Item</li>
+            </ul>
+            <div class="roadmap-placeholder">
+              Placeholder text
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  -->
+
+  {{SLIDES}}
+
+</div>
+
+<!-- Navigation arrows -->
+<div class="nav-zone nav-prev" id="navPrev" tabindex="0" role="button" aria-label="Previous slide">
+  <div class="nav-arrow">
+    <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+  </div>
+</div>
+<div class="nav-zone nav-next" id="navNext" tabindex="0" role="button" aria-label="Next slide">
+  <div class="nav-arrow">
+    <svg viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"/></svg>
+  </div>
+</div>
+
+<!-- Progress dots -->
+<div id="dots" role="tablist" aria-label="Slide navigation"></div>
+
+<!-- Slide counter -->
+<div id="counter" aria-live="polite"></div>
+
+<script>
+  (function () {
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const dotsEl = document.getElementById('dots');
+    const counterEl = document.getElementById('counter');
+    const TOTAL = slides.length;
+    let current = 0;
+    let animating = false;
+
+    slides.forEach((_, i) => {
+      const d = document.createElement('button');
+      d.className = 'dot' + (i === 0 ? ' active' : '');
+      d.setAttribute('role', 'tab');
+      d.setAttribute('aria-label', 'Slide ' + (i + 1));
+      d.setAttribute('tabindex', i === 0 ? '0' : '-1');
+      d.addEventListener('click', () => goTo(i));
+      dotsEl.appendChild(d);
+    });
+
+    function updateDots(idx) {
+      dotsEl.querySelectorAll('.dot').forEach((d, i) => {
+        d.classList.toggle('active', i === idx);
+        d.setAttribute('tabindex', i === idx ? '0' : '-1');
+      });
+    }
+
+    function updateCounter(idx) {
+      counterEl.textContent = (idx + 1) + ' / ' + TOTAL;
+    }
+
+    function goTo(next) {
+      if (next === current || animating) return;
+      if (next < 0 || next >= TOTAL) return;
+      animating = true;
+
+      const prev = current;
+      current = next;
+
+      slides[prev].classList.remove('active');
+      slides[prev].classList.add('exit-left');
+      slides[current].classList.add('active');
+
+      updateDots(current);
+      updateCounter(current);
+
+      const dur = parseFloat(
+        getComputedStyle(document.documentElement)
+          .getPropertyValue('--transition')
+      ) || 480;
+      setTimeout(() => {
+        slides[prev].classList.remove('exit-left');
+        animating = false;
+      }, dur);
+    }
+
+    function next() { goTo(current + 1); }
+    function prev() { goTo(current - 1); }
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); next(); }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); prev(); }
+    });
+
+    document.getElementById('navPrev').addEventListener('click', prev);
+    document.getElementById('navNext').addEventListener('click', next);
+    document.getElementById('navPrev').addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); prev(); }
+    });
+    document.getElementById('navNext').addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); next(); }
+    });
+
+    let touchStartX = 0;
+    document.addEventListener('touchstart', e => {
+      touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    document.addEventListener('touchend', e => {
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(dx) > 50) { dx < 0 ? next() : prev(); }
+    }, { passive: true });
+
+    updateCounter(0);
+  })();
+</script>
+</body>
+</html>
