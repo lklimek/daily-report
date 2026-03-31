@@ -37,17 +37,23 @@ python3 scripts/agent_stats.py --from YYYY-MM-DD --to YYYY-MM-DD --projects "das
 
 Analyze the consolidated report and group PRs into **user-facing themes** (not repo-by-repo). Target 4-6 content slides:
 
-1. **Title slide** — "My Progress: repo1, repo2", date range, author
+1. **Title slide** — "My Focus: repo1, repo2", date range, author
 2. **2-4 content slides** — themed around user benefits, grouping related PRs across repos
 3. **Closing slide** — three donut charts side by side: PR breakdown, AI agent activity, model usage
 
 #### Content slide rules
 - Catchy headline describing user benefit, not technical change
 - "Who benefits:" subtitle identifying target audience
-- 3-4 bullets max per slide
-- Each bullet: **bold lead-in** (accent blue) + plain-language explanation
-- PR numbers as small muted pill-badges at end of bullet — NOT prominent
+- **3 bullets max per slide** — readability over completeness
+- Each bullet: **large headline lead** (block, ~1.35rem, accent blue) + **description below** (block, ~0.95rem, muted) — two-line rhythm, not inline
+- PR numbers as small muted pill-badges at end of description — NOT prominent
 - Endpoint/API names in `<code>` tags
+- All bullet titles must be **unique across the entire deck** — no duplicates
+
+#### Stage badges
+- Add `<span class="stage-badge stage-alpha">In Progress</span>` to slide headings for features not yet production-ready
+- CSS classes: `stage-alpha` (amber gradient) for alpha/in-progress, `stage-beta` (purple gradient) for beta
+- Position: inline after heading text, auto-sized ~0.45em relative to heading
 
 #### Status badge rules
 - Each bullet gets exactly one status badge after the PR links
@@ -99,7 +105,7 @@ Logo uses the official Dash wordmark SVG in Dash blue (`#008DE4`), not white. So
         <path d="M75.85,172c-43.33,0-49.54,28.24-53.64,45.3-5.37,22.35-7.13,31.4-7.13,31.4H184.46c43.33,0,49.54-28.24,53.64-45.3,5.37-22.35,7.13-31.4,7.13-31.4Z"/>
       </svg>
     </div>
-    <h1>My Progress:<br>repo1, repo2</h1>
+    <h1>My Focus:<br>repo1, repo2</h1>
     <p class="meta">Date Range &middot; Author</p>
     <div class="title-rule"></div>
   </div>
@@ -118,7 +124,8 @@ Logo uses the official Dash wordmark SVG in Dash blue (`#008DE4`), not white. So
       <li>
         <span class="bullet-dot"></span>
         <span class="bullet-body">
-          <span class="bullet-lead">Bold lead</span> — Description.
+          <span class="bullet-lead">Large Headline</span>
+          <span class="bullet-desc">Description text on a separate line below.</span>
           <span class="pr-links"><a href="URL" target="_blank">#123</a></span>
           <span class="status-badge badge-merged">merged</span>
         </span>
@@ -127,6 +134,50 @@ Logo uses the official Dash wordmark SVG in Dash blue (`#008DE4`), not white. So
   </div>
   <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
 </section>
+```
+
+### Content slide with screenshot (split layout)
+
+Use `slide-split` grid for slides with screenshots. Bullets on the left, screenshot on the right. Images can be local file refs (`./filename.png`) or base64-encoded for self-contained HTML.
+
+```html
+<section class="slide" data-index="N">
+  <div class="slide-inner">
+    <h2 class="slide-heading">Theme Title <span class="stage-badge stage-alpha">In Progress</span></h2>
+    <p class="slide-subheading"><strong>Who benefits:</strong> Audience</p>
+    <div class="slide-split">
+      <div>
+        <ul class="bullets">
+          <!-- bullets here -->
+        </ul>
+        <!-- optional: tool-grid or other content under bullets -->
+      </div>
+      <div class="screenshot-wrap">
+        <img src="./screenshot.png" alt="Description">
+      </div>
+    </div>
+  </div>
+  <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
+</section>
+```
+
+Screenshot behavior:
+- Images scale to fill column width (`width: 100%`, no max-height cap)
+- Hover shows blue border + zoom-in cursor
+- Click opens fullscreen lightbox overlay (95vw/95vh), close with click or Escape
+- Lightbox element + JS must be in template (see `presentation-template.html`)
+
+### Tool grid (for listing available tools/APIs)
+
+Compact 4-column grid, useful on agent/developer-facing slides. Place inside left column of `slide-split`, below bullets.
+
+```html
+<div class="tool-grid">
+  <div><span class="tool-grid-group">Category</span></div>
+  <!-- repeat for each category column -->
+  <div><code>tool_name</code></div>
+  <!-- repeat for each tool -->
+</div>
 ```
 
 Badge types:
@@ -191,13 +242,16 @@ Donut math: circumference = 2×π×44 = 276.46. Each segment: `stroke-dasharray=
 
 ## Design Constraints
 
-- **Self-contained**: zero external dependencies — all CSS/JS inline in single HTML file
+- **Self-contained**: all CSS/JS inline in single HTML file. Images can be local file refs (`./`) or base64-encoded
 - **Target resolution**: 1920×1080, responsive down to 1280px
-- **3-4 bullets per slide max** — readability over completeness
+- **3 bullets per slide max** — readability over completeness
+- **Bullet layout**: large headline (block, accent blue) + description below (block, muted) — NOT inline `lead — description`
 - **PR links are subtle** — small monospace pills in muted gray, not the visual focus
 - **Theme headlines** describe user outcomes, not technical changes
 - **Code/endpoint names** use `<code>` tags for monospace treatment
 - **Logo**: official Dash wordmark SVG in **Dash blue** (`#008DE4`), not white
+- **Screenshots**: scale to fill column width, open fullscreen lightbox on click
+- **Stage badges**: amber "In Progress" / purple "Beta" pills on headings for pre-release features
 
 ## Assets
 
