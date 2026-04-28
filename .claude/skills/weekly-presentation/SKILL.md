@@ -12,26 +12,69 @@ Generate a self-contained HTML slide deck summarizing PR activity from `daily-re
 
 ### Phase 1: Generate the Report
 
+The author runs PRs under **two GitHub identities** — both must be covered:
+
+1. **Primary user** — default authenticated `gh` user (typically `lklimek`)
+2. **AI co-author** — `Claudius-Maginificent` (note the spelling: "Mag**i**nificent" — actual handle, bio: "Claudius the Magnificent AI, on behalf of lklimek"). PRs opened by this bot account are part of the same sprint output and MUST be included.
+
+Run the tool twice and merge the two markdown reports before designing slides:
+
 ```bash
 cd /home/ubuntu/git/daily-report
-python -m daily_report --from YYYY-MM-DD --to YYYY-MM-DD --repos-dir /home/ubuntu/git --org dashpay
+
+# Primary user (authenticated gh user)
+python -m daily_report --from YYYY-MM-DD --to YYYY-MM-DD \
+  --repos-dir /home/ubuntu/git --org dashpay > /tmp/report-primary.md
+
+# Claudius the Magnificent AI account
+python -m daily_report --from YYYY-MM-DD --to YYYY-MM-DD \
+  --repos-dir /home/ubuntu/git --org dashpay \
+  --user Claudius-Maginificent > /tmp/report-claudius.md
 ```
+
+Then read both files and treat the union as the input for Phase 2. Deduplicate PRs that appear in both (same `#number` in same repo) — a PR co-authored by both identities should only be presented once. Attribute it to whichever identity actually opened it (the `author` field), and note the AI co-authorship if relevant to the slide narrative.
 
 - Default scope: `dashpay` org only. Broaden only if user explicitly asks.
 - Default date range: last 2 weeks, **Wednesday to Tuesday** (sprint cycle). Calculate the most recent past Tuesday as `--to`, two Wednesdays back as `--from`.
 - **Exclude stale PRs**: Only include PRs that had actual activity (commits, reviews, status changes) within the date range. PRs that were merely open/waiting with no activity during the period must be excluded — they clutter the presentation with non-progress.
-- Skip if report output is already provided.
+- Skip if report output is already provided for both identities.
 
-### Phase 1b: Gather AI Agent Stats
+### Phase 1b: Gather Issue Stats (optional)
 
-```bash
-python3 scripts/agent_stats.py --from YYYY-MM-DD --to YYYY-MM-DD --projects "dash-evo-tool|platform|tenderdash|rust-dashcore"
+Use GitHub API (`search_issues`) to get issue counts for the primary repo:
+
+```
+Created in period:  search_issues query="repo:dashpay/REPO created:FROM..TO"  → total_count
+Closed in period:   search_issues query="repo:dashpay/REPO closed:FROM..TO"   → total_count
+Open before period: search_issues query="repo:dashpay/REPO state:open created:<=BEFORE_FROM" → total_count
+Current open:       list_issues state=OPEN → totalCount
 ```
 
-- Default scope: dashpay projects only (same filter as report).
-- Token totals include cache tokens (cache_creation + cache_read) — these are the bulk.
-- Use named agent identities in output: "Claudius the Magnificent" (orchestrator), "Bilby the Developer" (developer-bilby), "Explorer scouts" (Explore), etc.
-- Present with grandeur — these are proof of magnificence.
+Derive: `open_before = current_open - created_after_period + closed_after_period` (approximate from API counts).
+
+Use for the closing slide waterfall chart when issue tracking is more relevant than AI agent stats.
+
+### Phase 1c: Read Every PR Body (mandatory)
+
+**Do not write a single bullet from PR titles alone.** PR titles compress; bodies have the user-impact, the numbers, and the gotchas. Skipping this step produces generic, undersold slides.
+
+For every PR you intend to put on a slide (authored *and* notable reviews), fetch the body via `gh`:
+
+```bash
+gh pr view <NUMBER> --repo dashpay/<REPO> --json title,state,isDraft,additions,deletions,body,author,createdAt,mergedAt,url
+```
+
+Batch them with `xargs -P 8` or parallel `Bash` calls — they're independent and cheap. Save raw JSON to `/tmp/pr-bodies/<repo>-<num>.json` so reruns don't re-fetch.
+
+For each PR, extract three things and use them when writing the bullet:
+
+1. **What changed (one line)** — the *user-visible* change, not the file diff. Bodies usually have a "What was done" or "Summary" section; lift the lede.
+2. **Hard evidence** — concrete numbers ("passes on testnet in 24.76s", "+13.4k LoC", "reduces 100→16", "first end-to-end transfer"). These are what make a slide feel real.
+3. **Sibling/dependency relationships** — bodies often reveal that PR-A *contains* PR-B's fix, or that PR-A is a doc-PR for crate-X built in PR-B. Group siblings into the same bullet (or attribute correctly across bullets) instead of double-counting.
+
+If a PR body is empty or thin (dependabot, mechanical bumps, broken-fetch entries), it's a candidate for the closing-slide stats but probably not a content bullet. Drop it from theme slides.
+
+**Then proceed to Phase 2 with PR-body context in working memory** — not just the title list.
 
 ### Phase 2: Design the Slide Content
 
@@ -39,13 +82,14 @@ Analyze the consolidated report and group PRs into **user-facing themes** (not r
 
 1. **Title slide** — "My Focus: repo1, repo2", date range, author
 2. **2-4 content slides** — themed around user benefits, grouping related PRs across repos
-3. **Closing slide** — three donut charts side by side: PR breakdown, AI agent activity, model usage
+3. **Closing slide** — two-column layout: PR donut (merged/in-progress/closed) + issue waterfall (before→created→closed→after)
 
 #### Content slide rules
 - Catchy headline describing user benefit, not technical change
 - "Who benefits:" subtitle identifying target audience
 - **3 bullets max per slide** — readability over completeness
 - Each bullet: **large headline lead** (block, ~1.35rem, accent blue) + **description below** (block, ~0.95rem, muted) — two-line rhythm, not inline
+- **Repo labels go FIRST**: each bullet's `<span class="bullet-lead">` opens with a `<span class="repo-label repo-det">DET</span>` (or `repo-platform`, `repo-tenderdash`, `repo-dashcore`) pill as a visual prefix to the headline. Buried at the end of long descriptions they get missed; as a prefix they're scannable at a glance
 - PR numbers as small muted pill-badges at end of description — NOT prominent
 - Endpoint/API names in `<code>` tags
 - All bullet titles must be **unique across the entire deck** — no duplicates
@@ -61,13 +105,18 @@ Analyze the consolidated report and group PRs into **user-facing themes** (not r
 - **If a bullet references multiple PRs and at least one is not merged, mark the whole bullet as "in progress"** — the most conservative status wins
 - Only mark as `merged` when ALL referenced PRs are merged
 
-#### Closing slide: three-column layout
-Use `class="three-col"` grid with three `col-card` elements:
-1. **Pull Requests** — donut chart of PR categories (direct, AI agent, dependency updates)
-2. **AI Agent Activity** — donut chart of token usage by agent type, with named identities
-3. **Models** — donut chart of token usage by model (Opus, Sonnet, Haiku)
+#### Closing slide: two-column layout (always)
+Use `class="two-col"` grid with two `col-card` elements:
 
-Each card: donut (180×180), legend with colored dots + labels + counts + space-padded percentage (e.g. `799M (29%)`, `2.3B (82%)`, `224M ( 8%)`), subtitle below.
+1. **Pull Requests** — donut chart of PR status (merged, in progress, closed)
+2. **Issue Tracker** — waterfall chart showing before → created → closed → after
+
+**Chart type selection:**
+- **Donut**: good when segments have comparable proportions (e.g., 60/30/10 split)
+- **Waterfall**: better for before/after comparisons with small deltas (e.g., issue counts 60→62 with +3/−1). Donuts fail here because a 95%/5% split is visually meaningless
+
+Each donut card: chart (180×180), legend with colored dots + labels + counts + space-padded percentage.
+Each waterfall: 4 bars (Before, +Created, −Closed, After) with zoomed Y-axis range, dashed connectors between bars, colored delta labels.
 
 ### Phase 3: Generate the HTML
 
@@ -124,7 +173,7 @@ Logo uses the official Dash wordmark SVG in Dash blue (`#008DE4`), not white. So
       <li>
         <span class="bullet-dot"></span>
         <span class="bullet-body">
-          <span class="bullet-lead">Large Headline</span>
+          <span class="bullet-lead"><span class="repo-label repo-det">DET</span> Large Headline</span>
           <span class="bullet-desc">Description text on a separate line below.</span>
           <span class="pr-links"><a href="URL" target="_blank">#123</a></span>
           <span class="status-badge badge-merged">merged</span>
@@ -135,6 +184,8 @@ Logo uses the official Dash wordmark SVG in Dash blue (`#008DE4`), not white. So
   <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
 </section>
 ```
+
+Repo label classes: `repo-det` (blue), `repo-platform` (purple), `repo-tenderdash` (green), `repo-dashcore` (amber). The label sits **inside** `bullet-lead` as the first child so it renders inline with the headline, vertical-align middle. For multi-repo bullets, stack two pills (`<span class="repo-label repo-tenderdash">…</span><span class="repo-label repo-platform">…</span>`).
 
 ### Content slide with screenshot (split layout)
 
@@ -186,43 +237,49 @@ Badge types:
 - `badge-open` — green outline, open PR
 - `badge-waiting` — amber, awaiting review
 
-### Closing slide (three-column with donut charts)
+### Closing slide (flexible column layout)
 
-Donut math: circumference = 2×π×44 = 276.46. Each segment: `stroke-dasharray="ARC 276.46"`. Rotation = -90 + (cumulative_prior / total) × 360.
+Use `two-col` or `three-col` grid. Mix donut and waterfall charts based on data.
+
+**Donut math:** circumference = 2×π×44 = 276.46. Each segment: `stroke-dasharray="ARC 276.46"`. Rotation = -90 + (cumulative_prior / total) × 360.
+
+**Waterfall math:** Pick a zoomed Y-axis range (e.g., 56–64 for values 60/62/63). Scale = chart_height / range. Bars: Before (baseline→start), +Created (floating green), −Closed (floating amber), After (baseline→end). Connect with dashed lines at transition points.
 
 ```html
-<section class="slide" data-index="N">
-  <div class="slide-inner">
-    <h2 class="slide-heading">By the Numbers</h2>
-    <div class="three-col">
-      <div class="col-card">
-        <h3>Pull Requests</h3>
-        <div class="donut-wrap">
-          <svg width="180" height="180" viewBox="0 0 120 120">
-            <circle cx="60" cy="60" r="44" fill="none" stroke="#21262d" stroke-width="14"/>
-            <circle cx="60" cy="60" r="44" fill="none" stroke="#008DE4" stroke-width="14"
-              stroke-dasharray="ARC1 276.46" transform="rotate(-90 60 60)"/>
-            <!-- more segments... -->
-            <text x="60" y="56" text-anchor="middle" fill="#e6edf3" font-size="22" font-weight="800"
-              font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">TOTAL</text>
-            <text x="60" y="72" text-anchor="middle" fill="#8b949e" font-size="9"
-              font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">PRs</text>
-          </svg>
-          <div class="donut-legend"><!-- legend-row items --></div>
-        </div>
-      </div>
-      <div class="col-card">
-        <h3>AI Agent Activity</h3>
-        <!-- Same donut pattern, tokens in center, agent names in legend -->
-      </div>
-      <div class="col-card">
-        <h3>Models</h3>
-        <!-- Same donut pattern, model names in legend -->
-      </div>
-    </div>
+<!-- Donut card (e.g., PR breakdown) -->
+<div class="col-card">
+  <h3>Pull Requests</h3>
+  <div class="donut-wrap">
+    <svg width="180" height="180" viewBox="0 0 120 120">
+      <circle cx="60" cy="60" r="44" fill="none" stroke="#21262d" stroke-width="14"/>
+      <circle cx="60" cy="60" r="44" fill="none" stroke="#008DE4" stroke-width="14"
+        stroke-dasharray="ARC1 276.46" transform="rotate(-90 60 60)"/>
+      <!-- more segments... -->
+      <text x="60" y="56" text-anchor="middle" fill="#e6edf3" font-size="22" font-weight="800"
+        font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">TOTAL</text>
+      <text x="60" y="72" text-anchor="middle" fill="#8b949e" font-size="9"
+        font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">PRs</text>
+    </svg>
+    <div class="donut-legend"><!-- legend-row items --></div>
   </div>
-  <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
-</section>
+</div>
+
+<!-- Waterfall card (e.g., issue tracker) -->
+<div class="col-card">
+  <h3>dash-evo-tool Issues</h3>
+  <div style="display:flex;flex-direction:column;align-items:center;">
+    <svg width="220" height="180" viewBox="0 0 220 180">
+      <!-- Y-axis: zoomed range, dashed grid line at start value -->
+      <!-- Bar 1: Before — blue, opacity 0.7 -->
+      <!-- Bar 2: +Created — green, floating on top of Before -->
+      <!-- Bar 3: −Closed — amber, floating, hanging from top -->
+      <!-- Bar 4: After — blue, solid -->
+      <!-- Dashed connectors between bar transitions -->
+      <!-- X-axis labels: Before, Created, Closed, After -->
+    </svg>
+  </div>
+  <p class="stat-breakdown" style="margin-top:4px;text-align:center">net <span>+N</span> open issues</p>
+</div>
 ```
 
 **Color palette for charts:**

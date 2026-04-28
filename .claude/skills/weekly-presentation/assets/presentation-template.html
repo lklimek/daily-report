@@ -28,6 +28,13 @@
     line-height: 1.6;
     overflow: hidden;
     user-select: none;
+    /* Mac Chrome: prevent two-finger trackpad swipe from triggering browser
+       back/forward. Without this, deck nav appears broken — users swipe to
+       advance a slide and end up on the previous web page. Linux Chrome
+       doesn't enable that gesture by default, which is why the bug is
+       Mac-only in user reports. */
+    overscroll-behavior: none;
+    touch-action: pan-y;
   }
 
   /* -- Deck container --------------------------------------------------- */
@@ -514,6 +521,25 @@
     outline-offset: 2px;
   }
 
+  /* -- Repo labels ------------------------------------------------------ */
+  .repo-label {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 4px;
+    margin-right: 4px;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .repo-det { color: #79c0ff; border-color: rgba(121,192,255,0.3); }
+  .repo-platform { color: #a371f7; border-color: rgba(163,113,247,0.3); }
+  .repo-tenderdash { color: #3fb950; border-color: rgba(63,185,80,0.3); }
+  .repo-dashcore { color: #d29922; border-color: rgba(210,153,34,0.3); }
+
   /* -- Status badges ---------------------------------------------------- */
   .status-badge {
     display: inline-block;
@@ -595,7 +621,7 @@
       </div>
     </section>
 
-    2. CONTENT SLIDE (bullets with PR links and status badges):
+    2. CONTENT SLIDE (bullets with repo labels, PR links, and status badges):
     <section class="slide" data-index="N">
       <div class="slide-inner">
         <h2 class="slide-heading">Slide Title</h2>
@@ -604,73 +630,49 @@
           <li>
             <span class="bullet-dot"></span>
             <span class="bullet-body">
-              <span class="bullet-lead">Bold lead-in</span> — Description text here.
+              <span class="bullet-lead"><span class="repo-label repo-det">DET</span> Bold lead-in</span>
+              <span class="bullet-desc">Description text on a separate line below.</span>
               <span class="pr-links"><a href="URL" target="_blank">#123</a></span>
               <span class="status-badge badge-merged">merged</span>
             </span>
           </li>
         </ul>
+        <!-- Repo label classes: repo-det (blue), repo-platform (purple),
+             repo-tenderdash (green), repo-dashcore (amber).
+             Repo label sits INSIDE bullet-lead as the first child so it
+             prefixes the headline — NOT buried at the end of the bullet. -->
         <!-- Status badge types:
           <span class="status-badge badge-merged">merged</span>   — green solid, shipped
           <span class="status-badge badge-open">open</span>       — green outline, open PR
           <span class="status-badge badge-waiting">waiting</span> — amber, awaiting review
-          <span class="status-badge badge-draft">draft</span>     — gray, in progress
+          <span class="status-badge badge-draft">draft</span>     — amber, in progress
         -->
       </div>
     </section>
 
-    3. CLOSING SLIDE (three-column with donut charts):
-    Donut chart math: circumference = 2*pi*r (r=44 => 276.46).
+    3. CLOSING SLIDE (two-column: PR donut + issue waterfall):
+    Donut math: circumference = 2*pi*r (r=44 => 276.46).
     Each segment: stroke-dasharray="ARC CIRCUMFERENCE", rotated by cumulative prior angle.
     Rotation formula: -90 + (prior_sum / total) * 360
-    Legend counts include space-padded percentage: "799M (29%)", "2.3B (82%)", "224M ( 8%)"
+    Waterfall: zoomed Y-axis range, 4 bars (Before/+Created/−Closed/After), dashed connectors.
     <section class="slide" data-index="N">
       <div class="slide-inner">
         <h2 class="slide-heading">By the Numbers</h2>
-        <div class="three-col">
+        <div class="two-col">
           <div class="col-card">
             <h3>Pull Requests</h3>
             <div class="donut-wrap">
               <svg width="180" height="180" viewBox="0 0 120 120" aria-label="PR breakdown">
                 <circle cx="60" cy="60" r="44" fill="none" stroke="#21262d" stroke-width="14"/>
-                <circle cx="60" cy="60" r="44" fill="none" stroke="#008DE4" stroke-width="14"
-                  stroke-dasharray="ARC1 276.46" transform="rotate(-90 60 60)"/>
-                <circle cx="60" cy="60" r="44" fill="none" stroke="#a371f7" stroke-width="14"
-                  stroke-dasharray="ARC2 276.46" transform="rotate(DEG2 60 60)"/>
-                <circle cx="60" cy="60" r="44" fill="none" stroke="#8b949e" stroke-width="14"
-                  stroke-dasharray="ARC3 276.46" transform="rotate(DEG3 60 60)"/>
-                <text x="60" y="56" text-anchor="middle" fill="#e6edf3" font-size="22" font-weight="800"
-                  font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">TOTAL</text>
-                <text x="60" y="72" text-anchor="middle" fill="#8b949e" font-size="9"
-                  font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">PRs</text>
+                <!-- Segments: merged (green), in-progress (amber), closed (gray) -->
               </svg>
-              <div class="donut-legend">
-                <div class="legend-row">
-                  <span class="legend-dot" style="background:#008DE4"></span>
-                  <span>Direct contributions</span>
-                  <span class="legend-count">N1 (XX%)</span>
-                </div>
-                <div class="legend-row">
-                  <span class="legend-dot" style="background:#a371f7"></span>
-                  <span>AI agent PRs</span>
-                  <span class="legend-count">N2 (XX%)</span>
-                </div>
-                <div class="legend-row">
-                  <span class="legend-dot" style="background:#8b949e"></span>
-                  <span>Dependency updates</span>
-                  <span class="legend-count">N3 (XX%)</span>
-                </div>
-              </div>
+              <div class="donut-legend"><!-- legend-row items --></div>
             </div>
-            <p class="stat-breakdown" style="margin-top:0">across <span>N</span> repos</p>
           </div>
           <div class="col-card">
-            <h3>AI Agent Activity</h3>
-            <!-- Same donut pattern (180x180), tokens in center, agent names + percentages in legend -->
-          </div>
-          <div class="col-card">
-            <h3>Models</h3>
-            <!-- Same donut pattern (180x180), model names + percentages in legend -->
+            <h3>dash-evo-tool Issues</h3>
+            <!-- Waterfall SVG: Before bar → +Created (green) → −Closed (amber) → After bar -->
+            <!-- See SKILL.md for waterfall math details -->
           </div>
         </div>
       </div>
@@ -784,6 +786,19 @@
     document.addEventListener('touchend', e => {
       const dx = e.changedTouches[0].clientX - touchStartX;
       if (Math.abs(dx) > 50) { dx < 0 ? next() : prev(); }
+    }, { passive: true });
+
+    // Mac trackpad: two-finger horizontal swipe fires wheel events with dominant
+    // deltaX. Convert those into slide navigation. Cooldown prevents inertial
+    // events from skipping multiple slides on a single physical gesture.
+    let wheelCooldown = false;
+    window.addEventListener('wheel', e => {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      if (Math.abs(e.deltaX) < 30) return;
+      if (wheelCooldown) return;
+      wheelCooldown = true;
+      setTimeout(() => { wheelCooldown = false; }, 600);
+      if (e.deltaX > 0) next(); else prev();
     }, { passive: true });
 
     updateCounter(0);
