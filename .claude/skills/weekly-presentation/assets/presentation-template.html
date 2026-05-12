@@ -723,6 +723,11 @@
     const TOTAL = slides.length;
     let current = 0;
     let animating = false;
+    // Queue at most one pending direction so rapid keypresses during an
+    // in-flight transition aren't dropped. The last direction wins, so a
+    // fast Right→Left mid-animation reverses cleanly instead of advancing
+    // multiple times.
+    let pendingDelta = 0;
 
     slides.forEach((_, i) => {
       const d = document.createElement('button');
@@ -746,7 +751,12 @@
     }
 
     function goTo(next) {
-      if (next === current || animating) return;
+      if (next === current) return;
+      if (animating) {
+        // Last direction wins — Right→Left mid-animation reverses cleanly.
+        pendingDelta = Math.sign(next - current);
+        return;
+      }
       if (next < 0 || next >= TOTAL) return;
       animating = true;
 
@@ -767,11 +777,20 @@
       setTimeout(() => {
         slides[prev].classList.remove('exit-left');
         animating = false;
+        const delta = pendingDelta;
+        pendingDelta = 0;
+        if (delta !== 0) goTo(current + delta);
       }, dur);
     }
 
-    function next() { goTo(current + 1); }
-    function prev() { goTo(current - 1); }
+    function next() {
+      if (animating) { pendingDelta = 1; return; }
+      goTo(current + 1);
+    }
+    function prev() {
+      if (animating) { pendingDelta = -1; return; }
+      goTo(current - 1);
+    }
 
     document.addEventListener('keydown', e => {
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); next(); }
