@@ -637,16 +637,15 @@
             </span>
           </li>
         </ul>
-        <!-- Repo label classes: repo-det (blue), repo-platform (purple),
+        NOTE: Repo label classes are repo-det (blue), repo-platform (purple),
              repo-tenderdash (green), repo-dashcore (amber).
              Repo label sits INSIDE bullet-lead as the first child so it
-             prefixes the headline — NOT buried at the end of the bullet. -->
-        <!-- Status badge types:
-          <span class="status-badge badge-merged">merged</span>   — green solid, shipped
-          <span class="status-badge badge-open">open</span>       — green outline, open PR
-          <span class="status-badge badge-waiting">waiting</span> — amber, awaiting review
-          <span class="status-badge badge-draft">draft</span>     — amber, in progress
-        -->
+             prefixes the headline — NOT buried at the end of the bullet.
+        NOTE: Status badge types are
+          status-badge badge-merged    — green solid, shipped
+          status-badge badge-open      — green outline, open PR
+          status-badge badge-waiting   — amber, awaiting review
+          status-badge badge-draft     — amber, in progress
       </div>
     </section>
 
@@ -664,20 +663,24 @@
             <div class="donut-wrap">
               <svg width="180" height="180" viewBox="0 0 120 120" aria-label="PR breakdown">
                 <circle cx="60" cy="60" r="44" fill="none" stroke="#21262d" stroke-width="14"/>
-                <!-- Segments: merged (green), in-progress (amber), closed (gray) -->
+                NOTE: Segments are merged (green), in-progress (amber), closed (gray).
               </svg>
-              <div class="donut-legend"><!-- legend-row items --></div>
+              <div class="donut-legend">NOTE: legend-row items go here</div>
             </div>
           </div>
           <div class="col-card">
             <h3>dash-evo-tool Issues</h3>
-            <!-- Waterfall SVG: Before bar → +Created (green) → −Closed (amber) → After bar -->
-            <!-- See SKILL.md for waterfall math details -->
+            NOTE: Waterfall SVG follows Before bar then +Created (green) then −Closed (amber) then After bar.
+            NOTE: See SKILL.md for waterfall math details.
           </div>
         </div>
       </div>
       <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
     </section>
+
+    CAUTION: This entire block is one HTML comment. Do NOT add nested
+    HTML-comment syntax inside it — the first inner --&gt; would terminate
+    the outer comment and inject placeholder example slides as real DOM.
   -->
 
   {{SLIDES}}
