@@ -35,7 +35,10 @@ python -m daily_report --from YYYY-MM-DD --to YYYY-MM-DD \
 Then read both files and treat the union as the input for Phase 2. Deduplicate PRs that appear in both (same `#number` in same repo) — a PR co-authored by both identities should only be presented once. Attribute it to whichever identity actually opened it (the `author` field), and note the AI co-authorship if relevant to the slide narrative.
 
 - Default scope: `dashpay` org only. Broaden only if user explicitly asks.
-- Default date range: last 2 weeks, **Wednesday to Tuesday** (sprint cycle). Calculate the most recent past Tuesday as `--to`, two Wednesdays back as `--from`.
+- **Date range derivation** — derive `--from`/`--to` from the previous deck, not a fixed "2 weeks back" formula:
+  1. Find the previous deck: `ls presentations/ | sort | tail -1` gives the most recent `YYYY-MM-DDTHHMMSS` directory. The date prefix is the previous `--to`.
+  2. New `--from` = previous_to + 1 day. New `--to` = most recent past Tuesday on or before today (sprint cycle is bi-weekly Wed→Tue). If today IS a Tuesday and previous deck is ≥14 days ago, use today.
+  3. Fallback to "last 2 weeks Wed→Tue" only when no `presentations/` directory exists yet.
 - **Exclude stale PRs**: Only include PRs that had actual activity (commits, reviews, status changes) within the date range. PRs that were merely open/waiting with no activity during the period must be excluded — they clutter the presentation with non-progress.
 - Skip if report output is already provided for both identities.
 
@@ -94,6 +97,13 @@ Analyze the consolidated report and group PRs into **user-facing themes** (not r
 - Endpoint/API names in `<code>` tags
 - All bullet titles must be **unique across the entire deck** — no duplicates
 
+#### Bullet voice — value, not mechanics
+Every `bullet-desc` opens with the **affected audience**: "Clients...", "Operators...", "QA...", "Wallet UI...", "Embedders...", "Release engineering...". State what *changes for that audience*, not what the PR refactored.
+
+If you cannot articulate a user-visible benefit from the PR body, drop it from theme slides — let it appear only in closing-slide donut counts.
+
+Example: PR "Backport dash-network-seeds bootstrap to SDK" → bullet: "Clients no longer ship hardcoded SDK endpoint lists" (not "Backports network-seeds module").
+
 #### Stage badges
 - Add `<span class="stage-badge stage-alpha">In Progress</span>` to slide headings for features not yet production-ready
 - CSS classes: `stage-alpha` (amber gradient) for alpha/in-progress, `stage-beta` (purple gradient) for beta
@@ -135,6 +145,12 @@ python3 -m http.server 8244 --directory /home/ubuntu/git/daily-report/presentati
 
 Run in background. Tell user: `http://localhost:8244/`
 Only the presentation directory is exposed. Kill and restart on different port if requested.
+
+#### Playwright QA (optional but recommended for SPA-init verification)
+
+- Serve over `http://` — Playwright's sandbox blocks `file://`
+- Navigate with paced delays (~200ms+ between keypresses) to avoid triggering the animation-lock queue unintentionally
+- Simulate Save-Page-As round-trip: capture `document.documentElement.outerHTML` after navigating to a mid-deck slide, write it to a temp file, serve on a fresh port, reopen — verify slide resets to slide 0 correctly
 
 ## Slide HTML Patterns
 
@@ -237,6 +253,53 @@ Badge types:
 - `badge-open` — green outline, open PR
 - `badge-waiting` — amber, awaiting review
 
+### Test-coverage chart slide
+
+Horizontal stacked-bar chart showing test coverage by functional area. Use `.slide-compact` on `.slide-inner` to reclaim vertical space.
+
+Layout rules:
+- **≤7 rows**; consolidate small all-todo areas into an "Other" row
+- Labels right-aligned in a left column (`text-anchor="end"`); bars start ~20px right of longest label
+- **Bar widths are absolute, not normalized**: `bar_width = bar_max_w × (row_total / max_total)`. Visual weight reflects scope — small areas read short.
+- Stacked segments inside each bar: passing / failing / todo
+- Palette: passing `#3fb950`, failing `#da3633`, todo `#8b949e`
+- **No `rx` on data bars** (square corners). Legend swatches may use `rx="2"`
+- Counts column on right: `<passing> / <failing> / <todo>`
+- Footnote ≤2 lines at ~0.68rem; PR-pill credit row single-line via `flex-wrap:nowrap`
+
+```html
+<section class="slide" data-index="N">
+  <div class="slide-inner slide-compact">
+    <h2 class="slide-heading">Test Coverage by Area</h2>
+    <p class="slide-subheading"><strong>Who benefits:</strong> QA &amp; release engineering</p>
+    <svg width="680" height="220" viewBox="0 0 680 220" style="display:block;margin:0 auto;">
+      <!-- label column ends at x=180; bars start at x=200 -->
+      <!-- row 0: label -->
+      <text x="178" y="22" text-anchor="end" fill="#8b949e" font-size="13">Area Name</text>
+      <!-- passing segment (no rx) -->
+      <rect x="200" y="8" width="PASS_W" height="18" fill="#3fb950"/>
+      <!-- failing segment -->
+      <rect x="200+PASS_W" y="8" width="FAIL_W" height="18" fill="#da3633"/>
+      <!-- todo segment -->
+      <rect x="200+PASS_W+FAIL_W" y="8" width="TODO_W" height="18" fill="#8b949e"/>
+      <!-- counts -->
+      <text x="650" y="22" text-anchor="end" fill="#8b949e" font-size="11">P / F / T</text>
+      <!-- repeat for each row with y += 30 -->
+      <!-- legend (rx="2" allowed on swatches) -->
+      <rect x="200" y="BOTTOM" width="12" height="12" rx="2" fill="#3fb950"/>
+      <text x="216" y="BOTTOM+10" fill="#8b949e" font-size="11">Passing</text>
+      <rect x="280" y="BOTTOM" width="12" height="12" rx="2" fill="#da3633"/>
+      <text x="296" y="BOTTOM+10" fill="#8b949e" font-size="11">Failing</text>
+      <rect x="340" y="BOTTOM" width="12" height="12" rx="2" fill="#8b949e"/>
+      <text x="356" y="BOTTOM+10" fill="#8b949e" font-size="11">Todo</text>
+    </svg>
+    <p style="font-size:0.68rem;color:#8b949e;margin-top:8px;">Footnote line 1. Footnote line 2.</p>
+    <div class="pr-links" style="flex-wrap:nowrap">#PR credit</div>
+  </div>
+  <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
+</section>
+```
+
 ### Closing slide (flexible column layout)
 
 Use `two-col` or `three-col` grid. Mix donut and waterfall charts based on data.
@@ -309,6 +372,8 @@ Use `two-col` or `three-col` grid. Mix donut and waterfall charts based on data.
 - **Logo**: official Dash wordmark SVG in **Dash blue** (`#008DE4`), not white
 - **Screenshots**: scale to fill column width, open fullscreen lightbox on click
 - **Stage badges**: amber "In Progress" / purple "Beta" pills on headings for pre-release features
+- **Save-Page-As idempotency**: Chrome serializes post-JS DOM, so a saved deck arrives with stale `.active`/`.exit-left` classes, appended dot buttons, and open lightbox state. The nav init block MUST be idempotent: call `dotsEl.replaceChildren()`, reset every slide's `.active`/`.exit-left` to defaults, clear lightbox state, and sync the counter. Test by round-tripping `document.documentElement.outerHTML` to a temp port.
+- **Animation lock queue**: nav JS MUST NOT silently drop keypresses during transitions. Chrome auto-repeat (~50ms) vs animation (~480ms) means rapid presses feel frozen if dropped. Pattern: `let pendingDelta = 0`; when called while `animating`, set `pendingDelta = Math.sign(target - current)`; replay on animation complete; reset.
 
 ## Assets
 
