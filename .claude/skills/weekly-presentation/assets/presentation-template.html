@@ -720,7 +720,22 @@
     const slides = Array.from(document.querySelectorAll('.slide'));
     const dotsEl = document.getElementById('dots');
     const counterEl = document.getElementById('counter');
+    const lbEl = document.getElementById('lightbox');
+    const lbImgEl = document.getElementById('lightboxImg');
     const TOTAL = slides.length;
+
+    // Chrome's "Save Page As" serializes the post-JS DOM. A saved deck
+    // arrives carrying whatever .active / .exit-left / .open classes,
+    // appended dot buttons, and lightbox src were live at save time.
+    // Reset all mutable state to slide 0 before wiring handlers.
+    dotsEl.replaceChildren();
+    slides.forEach((s, i) => {
+      s.classList.remove('exit-left');
+      s.classList.toggle('active', i === 0);
+    });
+    if (lbEl) lbEl.classList.remove('open');
+    if (lbImgEl) { lbImgEl.src = ''; lbImgEl.alt = ''; }
+
     let current = 0;
     let animating = false;
     // Queue at most one pending direction so rapid keypresses during an
@@ -738,6 +753,7 @@
       d.addEventListener('click', () => goTo(i));
       dotsEl.appendChild(d);
     });
+    counterEl.textContent = '1 / ' + TOTAL;
 
     function updateDots(idx) {
       dotsEl.querySelectorAll('.dot').forEach((d, i) => {
