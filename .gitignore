@@ -4,6 +4,7 @@ __pycache__/
 
 # Generated output
 *.pptx
+presentations/*/
 
 # Config files that may contain secrets
 .env
@@ -11,3 +12,4 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+settings.local.json

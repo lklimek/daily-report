@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d1117;
+    --accent: #008DE4;
+    --accent-dim: rgba(0, 141, 228, 0.12);
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --subtle: #21262d;
+    --border: #30363d;
+    --code-bg: #161b22;
+    --transition: 480ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 18px;
+    line-height: 1.6;
+    overflow: hidden;
+    user-select: none;
+    /* Mac Chrome: prevent two-finger trackpad swipe from triggering browser
+       back/forward. Without this, deck nav appears broken — users swipe to
+       advance a slide and end up on the previous web page. Linux Chrome
+       doesn't enable that gesture by default, which is why the bug is
+       Mac-only in user reports. */
+    overscroll-behavior: none;
+    touch-action: pan-y;
+  }
+
+  /* -- Deck container --------------------------------------------------- */
+  #deck {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* -- Slides ----------------------------------------------------------- */
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 100px 80px 60px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(60px);
+    transition: opacity var(--transition), transform var(--transition);
+    will-change: opacity, transform;
+  }
+  /* Compact variant for dense, chart-heavy slides — reclaim vertical real
+     estate so footnote and credits don't crowd the page counter. */
+  .slide:has(.slide-compact) {
+    padding: 60px 80px 40px;
+  }
+  .slide.active {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+  }
+  .slide.exit-left {
+    opacity: 0;
+    transform: translateX(-60px);
+    pointer-events: none;
+  }
+
+  /* -- Slide inner layout ----------------------------------------------- */
+  .slide-inner {
+    width: 100%;
+    max-width: 1320px;
+  }
+
+  /* -- Title slide ------------------------------------------------------ */
+  .slide-title {
+    text-align: center;
+  }
+  .slide:has(.slide-title) {
+    justify-content: center;
+    padding-top: 60px;
+  }
+  .dash-logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 48px;
+  }
+  .dash-logo-mark {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dash-logo-mark svg {
+    width: 36px;
+    height: 36px;
+    fill: #fff;
+  }
+  .dash-logo-text {
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+  }
+  .slide-title h1 {
+    font-size: clamp(2.4rem, 4vw, 3.6rem);
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    margin-bottom: 24px;
+  }
+  .slide-title .meta {
+    font-size: 1.1rem;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+  }
+  .title-rule {
+    width: 80px;
+    height: 4px;
+    background: var(--accent);
+    border-radius: 2px;
+    margin: 32px auto 0;
+  }
+
+  /* -- Content slides --------------------------------------------------- */
+  .slide-heading {
+    font-size: clamp(1.8rem, 3vw, 2.8rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .slide-subheading {
+    font-size: 0.95rem;
+    font-style: italic;
+    color: var(--muted);
+    margin-bottom: 36px;
+  }
+  .slide-subheading strong {
+    font-style: normal;
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  /* -- Stage badges ----------------------------------------------------- */
+  .stage-badge {
+    display: inline-block;
+    font-size: 0.45em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 3px 10px;
+    border-radius: 6px;
+    vertical-align: middle;
+    margin-left: 12px;
+    position: relative;
+    top: -0.08em;
+  }
+  .stage-beta {
+    color: #fff;
+    background: linear-gradient(135deg, #6e40c9, #a371f7);
+  }
+  .stage-alpha {
+    color: #1c1e21;
+    background: linear-gradient(135deg, #d29922, #e8b931);
+  }
+
+  /* -- Bullet list ------------------------------------------------------ */
+  .bullets {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+  .bullets li {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    color: #c9d1d9;
+    line-height: 1.5;
+  }
+  .bullet-dot {
+    flex-shrink: 0;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-top: 10px;
+  }
+  .bullet-body {
+    flex: 1;
+  }
+  .bullet-lead {
+    display: block;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 4px;
+    line-height: 1.3;
+  }
+  .bullet-desc {
+    display: block;
+    font-size: 0.95rem;
+    color: #9eaab6;
+    line-height: 1.55;
+  }
+  /* PR links */
+  .pr-links {
+    display: inline;
+    margin-left: 6px;
+  }
+  .pr-links a {
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-decoration: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-left: 3px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  .pr-links a:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  /* Monospace inline */
+  code {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: #79c0ff;
+  }
+
+  /* -- Content + screenshot layout -------------------------------------- */
+  .slide-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    align-items: start;
+  }
+  .slide-split .bullets {
+    min-width: 0;
+  }
+  .screenshot-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 320px;
+  }
+  .screenshot-wrap img {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    object-fit: contain;
+    cursor: zoom-in;
+    transition: border-color 0.2s;
+  }
+  .screenshot-wrap img:hover {
+    border-color: var(--accent);
+  }
+  .screenshot-placeholder {
+    width: 100%;
+    min-height: 320px;
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-style: italic;
+    background: var(--subtle);
+  }
+
+  /* -- Fullscreen lightbox --------------------------------------------- */
+  .lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 300ms ease;
+  }
+  .lightbox.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .lightbox img {
+    max-width: 95vw;
+    max-height: 95vh;
+    object-fit: contain;
+    border-radius: 8px;
+  }
+
+  /* -- Tool grid -------------------------------------------------------- */
+  .tool-grid {
+    margin-top: 24px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px 20px;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+  .tool-grid-group {
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding-top: 4px;
+  }
+  .tool-grid code {
+    font-size: 0.7rem;
+    padding: 0 4px;
+    border: none;
+    background: none;
+    color: #9eaab6;
+  }
+
+  /* -- Multi-column layout (stats slide) -------------------------------- */
+  .three-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 24px;
+    margin-top: 12px;
+  }
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    margin-top: 12px;
+  }
+  .col-card {
+    background: var(--subtle);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+  }
+  .col-card h3 {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 16px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .stat-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .stat-number {
+    font-size: 3.2rem;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: 1rem;
+    color: var(--muted);
+  }
+  .stat-breakdown {
+    font-size: 0.88rem;
+    color: var(--muted);
+    line-height: 1.7;
+    margin-top: 4px;
+  }
+  .stat-breakdown span {
+    color: #c9d1d9;
+  }
+  .coming-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .coming-list li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.95rem;
+    color: #c9d1d9;
+  }
+  .coming-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+  .roadmap-placeholder {
+    margin-top: 20px;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-style: italic;
+    text-align: center;
+  }
+
+  /* -- Navigation ------------------------------------------------------- */
+  .nav-zone {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: 72px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    opacity: 0;
+    transition: opacity 0.25s;
+  }
+  .nav-zone:hover { opacity: 1; }
+  .nav-zone.nav-prev { left: 0; }
+  .nav-zone.nav-next { right: 0; }
+  .nav-arrow {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+  }
+  .nav-arrow svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .nav-zone:hover .nav-arrow {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
+  /* Progress dots */
+  #dots {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    z-index: 60;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+    cursor: pointer;
+    transition: background 0.25s, transform 0.25s;
+  }
+  .dot.active {
+    background: var(--accent);
+    transform: scale(1.3);
+  }
+
+  /* Slide counter */
+  #counter {
+    position: fixed;
+    bottom: 24px;
+    right: 32px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    z-index: 60;
+  }
+
+  /* Signature */
+  .slide-credits {
+    position: absolute;
+    bottom: 18px;
+    left: 32px;
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+  .slide-credits a {
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--border);
+  }
+  .slide-credits a:hover {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* Keyboard focus */
+  .nav-zone:focus-visible .nav-arrow,
+  .dot:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* -- Repo labels ------------------------------------------------------ */
+  .repo-label {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 4px;
+    margin-right: 4px;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .repo-det { color: #79c0ff; border-color: rgba(121,192,255,0.3); }
+  .repo-platform { color: #a371f7; border-color: rgba(163,113,247,0.3); }
+  .repo-tenderdash { color: #3fb950; border-color: rgba(63,185,80,0.3); }
+  .repo-dashcore { color: #d29922; border-color: rgba(210,153,34,0.3); }
+
+  /* -- Status badges ---------------------------------------------------- */
+  .status-badge {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+  }
+  .badge-merged { background: #238636; color: #fff; }
+  .badge-open { background: transparent; border: 1px solid #238636; color: #3fb950; }
+  .badge-draft { background: #d29922; color: #1c1e21; }
+  .badge-waiting { background: #d29922; color: #1c1e21; }
+
+  /* -- Donut chart (stats slide) ---------------------------------------- */
+  .donut-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .donut-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 12px;
+    width: 100%;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .legend-count {
+    margin-left: auto;
+    font-weight: 700;
+    color: #c9d1d9;
+  }
+</style>
+</head>
+<body>
+
+<div id="deck">
+
+  <!--
+    SLIDE CONTENT GOES HERE.
+
+    Each slide is a <section class="slide" data-index="N"> where N starts at 0.
+    The first slide must have class="slide active".
+
+    === SLIDE TYPES ===
+
+    1. TITLE SLIDE:
+    <section class="slide active" data-index="0">
+      <div class="slide-inner slide-title">
+        <div class="dash-logo">
+          <svg viewBox="0 0 1438.15 421.17" xmlns="http://www.w3.org/2000/svg" style="height:56px;width:auto;fill:#008DE4;">
+            <path d="M312.66,26.11H147.23l-13.71,76.63,149.28.18c73.52,0,95.26,26.69,94.64,71-.32,22.7-10.16,61.07-14.41,73.51-11.33,33.16-34.6,71-121.86,70.85l-145.11-.06L82.32,394.88H247.38c58.22,0,83-6.77,109.2-18.89,58.13-26.84,92.72-84.21,106.57-159.08C483.79,105.42,458.09,26.11,312.66,26.11Z"/>
+            <path d="M824.28,395.06l11.66-66.63H977.26c11.1,0,18.88-6.67,20.54-17.77,2.22-11.11-3.33-17.77-14.43-17.77H915.8c-53.31,0-78.85-31.09-69.41-84.4s46.09-84.39,99.39-84.39h153.53l-12.21,66.63H951.79c-11.11,0-18.88,6.66-20.55,17.76-2.22,11.11,3.33,17.77,14.44,17.77h67.57c53.3,0,78.84,31.1,69.41,84.4s-45.54,84.4-98.84,84.4Z"/>
+            <path d="M609.06,395.05c-87.74,0-127.17-47.76-111.62-135.5,15-87.73,71.64-135.49,159.37-135.49H812.3l-47.76,271ZM710.12,190.7h-40c-47.75,0-76,21.1-84.29,68.85-8.88,47.76,8.89,68.86,56.64,68.86h43.76Z"/>
+            <path d="M1292,395.05l27.77-157.71c5-31.1-7.62-44.42-38.72-44.42h-44.22l-35.54,202.13h-90l65.07-368.94h90l-17.32,98h67.4c78.85,0,107.17,34.43,93.29,113.28l-27.77,157.71Z"/>
+            <path d="M75.85,172c-43.33,0-49.54,28.24-53.64,45.3-5.37,22.35-7.13,31.4-7.13,31.4H184.46c43.33,0,49.54-28.24,53.64-45.3,5.37-22.35,7.13-31.4,7.13-31.4Z"/>
+          </svg>
+        </div>
+        <h1>Main Headline Here</h1>
+        <p class="meta">Date Range &middot; Author Name</p>
+        <div class="title-rule"></div>
+      </div>
+    </section>
+
+    2. CONTENT SLIDE (bullets with repo labels, PR links, and status badges):
+    <section class="slide" data-index="N">
+      <div class="slide-inner">
+        <h2 class="slide-heading">Slide Title</h2>
+        <p class="slide-subheading"><strong>Who benefits:</strong> Target audience</p>
+        <ul class="bullets">
+          <li>
+            <span class="bullet-dot"></span>
+            <span class="bullet-body">
+              <span class="bullet-lead"><span class="repo-label repo-det">DET</span> Bold lead-in</span>
+              <span class="bullet-desc">Description text on a separate line below.</span>
+              <span class="pr-links"><a href="URL" target="_blank">#123</a></span>
+              <span class="status-badge badge-merged">merged</span>
+            </span>
+          </li>
+        </ul>
+        NOTE: Repo label classes are repo-det (blue), repo-platform (purple),
+             repo-tenderdash (green), repo-dashcore (amber).
+             Repo label sits INSIDE bullet-lead as the first child so it
+             prefixes the headline — NOT buried at the end of the bullet.
+        NOTE: Status badge types are
+          status-badge badge-merged    — green solid, shipped
+          status-badge badge-open      — green outline, open PR
+          status-badge badge-waiting   — amber, awaiting review
+          status-badge badge-draft     — amber, in progress
+      </div>
+    </section>
+
+    3. CLOSING SLIDE (two-column: PR donut + issue waterfall):
+    Donut math: circumference = 2*pi*r (r=44 => 276.46).
+    Each segment: stroke-dasharray="ARC CIRCUMFERENCE", rotated by cumulative prior angle.
+    Rotation formula: -90 + (prior_sum / total) * 360
+    Waterfall: zoomed Y-axis range, 4 bars (Before/+Created/−Closed/After), dashed connectors.
+    <section class="slide" data-index="N">
+      <div class="slide-inner">
+        <h2 class="slide-heading">By the Numbers</h2>
+        <div class="two-col">
+          <div class="col-card">
+            <h3>Pull Requests</h3>
+            <div class="donut-wrap">
+              <svg width="180" height="180" viewBox="0 0 120 120" aria-label="PR breakdown">
+                <circle cx="60" cy="60" r="44" fill="none" stroke="#21262d" stroke-width="14"/>
+                NOTE: Segments are merged (green), in-progress (amber), closed (gray).
+              </svg>
+              <div class="donut-legend">NOTE: legend-row items go here</div>
+            </div>
+          </div>
+          <div class="col-card">
+            <h3>dash-evo-tool Issues</h3>
+            NOTE: Waterfall SVG follows Before bar then +Created (green) then −Closed (amber) then After bar.
+            NOTE: See SKILL.md for waterfall math details.
+          </div>
+        </div>
+      </div>
+      <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
+    </section>
+
+    CAUTION: This entire block is one HTML comment. Do NOT add nested
+    HTML-comment syntax inside it — the first inner --&gt; would terminate
+    the outer comment and inject placeholder example slides as real DOM.
+  -->
+
+  {{SLIDES}}
+
+</div>
+
+<!-- Navigation arrows -->
+<div class="nav-zone nav-prev" id="navPrev" tabindex="0" role="button" aria-label="Previous slide">
+  <div class="nav-arrow">
+    <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+  </div>
+</div>
+<div class="nav-zone nav-next" id="navNext" tabindex="0" role="button" aria-label="Next slide">
+  <div class="nav-arrow">
+    <svg viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"/></svg>
+  </div>
+</div>
+
+<!-- Progress dots -->
+<div id="dots" role="tablist" aria-label="Slide navigation"></div>
+
+<!-- Slide counter -->
+<div id="counter" aria-live="polite"></div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" role="dialog" aria-label="Image preview">
+  <img id="lightboxImg" src="" alt="">
+</div>
+
+<script>
+  (function () {
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const dotsEl = document.getElementById('dots');
+    const counterEl = document.getElementById('counter');
+    const lbEl = document.getElementById('lightbox');
+    const lbImgEl = document.getElementById('lightboxImg');
+    const TOTAL = slides.length;
+
+    // Chrome's "Save Page As" serializes the post-JS DOM. A saved deck
+    // arrives carrying whatever .active / .exit-left / .open classes,
+    // appended dot buttons, and lightbox src were live at save time.
+    // Reset all mutable state to slide 0 before wiring handlers.
+    dotsEl.replaceChildren();
+    slides.forEach((s, i) => {
+      s.classList.remove('exit-left');
+      s.classList.toggle('active', i === 0);
+    });
+    if (lbEl) lbEl.classList.remove('open');
+    if (lbImgEl) { lbImgEl.src = ''; lbImgEl.alt = ''; }
+
+    let current = 0;
+    let animating = false;
+    // Queue at most one pending direction so rapid keypresses during an
+    // in-flight transition aren't dropped. The last direction wins, so a
+    // fast Right→Left mid-animation reverses cleanly instead of advancing
+    // multiple times.
+    let pendingDelta = 0;
+
+    slides.forEach((_, i) => {
+      const d = document.createElement('button');
+      d.className = 'dot' + (i === 0 ? ' active' : '');
+      d.setAttribute('role', 'tab');
+      d.setAttribute('aria-label', 'Slide ' + (i + 1));
+      d.setAttribute('tabindex', i === 0 ? '0' : '-1');
+      d.addEventListener('click', () => goTo(i));
+      dotsEl.appendChild(d);
+    });
+    counterEl.textContent = '1 / ' + TOTAL;
+
+    function updateDots(idx) {
+      dotsEl.querySelectorAll('.dot').forEach((d, i) => {
+        d.classList.toggle('active', i === idx);
+        d.setAttribute('tabindex', i === idx ? '0' : '-1');
+      });
+    }
+
+    function updateCounter(idx) {
+      counterEl.textContent = (idx + 1) + ' / ' + TOTAL;
+    }
+
+    function goTo(next) {
+      if (next === current) return;
+      if (animating) {
+        // Last direction wins — Right→Left mid-animation reverses cleanly.
+        pendingDelta = Math.sign(next - current);
+        return;
+      }
+      if (next < 0 || next >= TOTAL) return;
+      animating = true;
+
+      const prev = current;
+      current = next;
+
+      slides[prev].classList.remove('active');
+      slides[prev].classList.add('exit-left');
+      slides[current].classList.add('active');
+
+      updateDots(current);
+      updateCounter(current);
+
+      const dur = parseFloat(
+        getComputedStyle(document.documentElement)
+          .getPropertyValue('--transition')
+      ) || 480;
+      setTimeout(() => {
+        slides[prev].classList.remove('exit-left');
+        animating = false;
+        const delta = pendingDelta;
+        pendingDelta = 0;
+        if (delta !== 0) goTo(current + delta);
+      }, dur);
+    }
+
+    function next() {
+      if (animating) { pendingDelta = 1; return; }
+      goTo(current + 1);
+    }
+    function prev() {
+      if (animating) { pendingDelta = -1; return; }
+      goTo(current - 1);
+    }
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); next(); }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); prev(); }
+    });
+
+    document.getElementById('navPrev').addEventListener('click', prev);
+    document.getElementById('navNext').addEventListener('click', next);
+    document.getElementById('navPrev').addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); prev(); }
+    });
+    document.getElementById('navNext').addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); next(); }
+    });
+
+    let touchStartX = 0;
+    document.addEventListener('touchstart', e => {
+      touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    document.addEventListener('touchend', e => {
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(dx) > 50) { dx < 0 ? next() : prev(); }
+    }, { passive: true });
+
+    // Mac trackpad: two-finger horizontal swipe fires wheel events with dominant
+    // deltaX. Convert those into slide navigation. Cooldown prevents inertial
+    // events from skipping multiple slides on a single physical gesture.
+    let wheelCooldown = false;
+    window.addEventListener('wheel', e => {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      if (Math.abs(e.deltaX) < 30) return;
+      if (wheelCooldown) return;
+      wheelCooldown = true;
+      setTimeout(() => { wheelCooldown = false; }, 600);
+      if (e.deltaX > 0) next(); else prev();
+    }, { passive: true });
+
+    updateCounter(0);
+
+    // Lightbox
+    const lb = document.getElementById('lightbox');
+    const lbImg = document.getElementById('lightboxImg');
+
+    document.addEventListener('click', e => {
+      const img = e.target.closest('.screenshot-wrap img');
+      if (img) {
+        e.stopPropagation();
+        lbImg.src = img.src;
+        lbImg.alt = img.alt;
+        lb.classList.add('open');
+      }
+    });
+
+    lb.addEventListener('click', () => lb.classList.remove('open'));
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && lb.classList.contains('open')) {
+        lb.classList.remove('open');
+      }
+    });
+  })();
+</script>
+</body>
+</html>
