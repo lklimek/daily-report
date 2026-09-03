@@ -5,7 +5,7 @@ Daily GitHub PR report generator. Hybrid local-git + GraphQL architecture (4-pha
 ## Quick Reference
 
 ```bash
-./run.sh [args]          # run the tool (or: python -m daily_report)
+./run.sh [args]          # run the tool (or: python3 -m daily_report)
 ./test.sh [args]         # run tests (or: python3 -m pytest tests/ -v)
 ```
 
