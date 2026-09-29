@@ -17,45 +17,44 @@ The author runs PRs under **two GitHub identities** — both must be covered:
 1. **Primary user** — default authenticated `gh` user (typically `lklimek`)
 2. **AI co-author** — `Claudius-Maginificent` (note the spelling: "Mag**i**nificent" — actual handle, bio: "Claudius the Magnificent AI, on behalf of lklimek"). PRs opened by this bot account are part of the same sprint output and MUST be included.
 
-Run the tool twice and merge the two markdown reports before designing slides:
+Work dir: `/data/tmp/weekly-<to-date>/` (reports, PR JSON, generator, screenshots — never `/tmp`). Run the tool twice and merge the two markdown reports before designing slides:
 
 ```bash
 cd /home/ubuntu/git/daily-report
 
 # Primary user (authenticated gh user)
 python3 -m daily_report --from YYYY-MM-DD --to YYYY-MM-DD \
-  --repos-dir /home/ubuntu/git --org dashpay > /tmp/report-primary.md
+  --repos-dir /home/ubuntu/git --org dashpay > /data/tmp/weekly-<to-date>/report-primary.md
 
 # Claudius the Magnificent AI account
 python3 -m daily_report --from YYYY-MM-DD --to YYYY-MM-DD \
   --repos-dir /home/ubuntu/git --org dashpay \
-  --user Claudius-Maginificent > /tmp/report-claudius.md
+  --user Claudius-Maginificent > /data/tmp/weekly-<to-date>/report-claudius.md
 ```
 
 Then read both files and treat the union as the input for Phase 2. Deduplicate PRs that appear in both (same `#number` in same repo) — a PR co-authored by both identities should only be presented once. Attribute it to whichever identity actually opened it (the `author` field), and note the AI co-authorship if relevant to the slide narrative.
 
 - Default scope: `dashpay` org only. Broaden only if user explicitly asks.
 - **Date range derivation** — derive `--from`/`--to` from the previous deck, not a fixed "2 weeks back" formula:
-  1. Find the previous deck: `ls presentations/ | sort | tail -1` gives the most recent `YYYY-MM-DDTHHMMSS` directory. The date prefix is the previous `--to`.
+  1. Anchor on the previous deck (reliable): `ls presentations/ | sort | tail -1` gives the most recent `YYYY-MM-DDTHHMMSS` directory. The date prefix is the previous `--to`.
   2. New `--from` = previous_to + 1 day. New `--to` = most recent past Tuesday on or before today (sprint cycle is bi-weekly Wed→Tue). If today IS a Tuesday and previous deck is ≥14 days ago, use today.
   3. Fallback to "last 2 weeks Wed→Tue" only when no `presentations/` directory exists yet.
 - **Exclude stale PRs**: Only include PRs that had actual activity (commits, reviews, status changes) within the date range. PRs that were merely open/waiting with no activity during the period must be excluded — they clutter the presentation with non-progress.
 - Skip if report output is already provided for both identities.
 
-### Phase 1b: Gather Issue Stats (optional)
+### Phase 1b: Summary counts (mandatory)
 
-Use GitHub API (`search_issues`) to get issue counts for the primary repo:
+Per focus repo, via GitHub search (`gh api -X GET search/issues -f q='...' --jq .total_count`), range `FROM..TO` inclusive:
 
-```
-Created in period:  search_issues query="repo:dashpay/REPO created:FROM..TO"  → total_count
-Closed in period:   search_issues query="repo:dashpay/REPO closed:FROM..TO"   → total_count
-Open before period: search_issues query="repo:dashpay/REPO state:open created:<=BEFORE_FROM" → total_count
-Current open:       list_issues state=OPEN → totalCount
-```
-
-Derive: `open_before = current_open - created_after_period + closed_after_period` (approximate from API counts).
-
-Use for the closing slide waterfall chart when issue tracking is more relevant than AI agent stats.
+- **PRs** — authors `lklimek` + `Claudius-Maginificent`, summed:
+  - created: `repo:dashpay/R is:pr author:A created:FROM..TO`
+  - merged: `repo:dashpay/R is:pr author:A merged:FROM..TO` (may include PRs opened earlier)
+  - closed (unmerged): `repo:dashpay/R is:pr author:A is:unmerged is:closed closed:FROM..TO`
+- **Issues** — whole repo, `is:issue`:
+  - opened: `repo:dashpay/R is:issue created:FROM..TO`; closed: `... is:issue closed:FROM..TO`
+  - open after: `... is:issue is:open` (confirm nothing opened/closed after TO); open before = after − opened + closed. Cross-check "before" against the previous deck's "after".
+  - Verify any `0` by listing (`gh issue list --state closed --search "closed:FROM..TO"`).
+- **Releases** in range: `gh release list --repo dashpay/R`.
 
 ### Phase 1c: Read Every PR Body (mandatory)
 
@@ -67,7 +66,7 @@ For every PR you intend to put on a slide (authored *and* notable reviews), fetc
 gh pr view <NUMBER> --repo dashpay/<REPO> --json title,state,isDraft,additions,deletions,body,author,createdAt,mergedAt,url
 ```
 
-Batch them with `xargs -P 8` or parallel `Bash` calls — they're independent and cheap. Save raw JSON to `/tmp/pr-bodies/<repo>-<num>.json` so reruns don't re-fetch.
+Batch them with `xargs -P 8` or parallel `Bash` calls — they're independent and cheap. Save raw JSON to `/data/tmp/weekly-<to-date>/pr/<repo>-<num>.json` so reruns don't re-fetch.
 
 For each PR, extract three things and use them when writing the bullet:
 
@@ -75,7 +74,7 @@ For each PR, extract three things and use them when writing the bullet:
 2. **Hard evidence** — concrete numbers ("passes on testnet in 24.76s", "+13.4k LoC", "reduces 100→16", "first end-to-end transfer"). These are what make a slide feel real.
 3. **Sibling/dependency relationships** — bodies often reveal that PR-A *contains* PR-B's fix, or that PR-A is a doc-PR for crate-X built in PR-B. Group siblings into the same bullet (or attribute correctly across bullets) instead of double-counting.
 
-If a PR body is empty or thin (dependabot, mechanical bumps, broken-fetch entries), it's a candidate for the closing-slide stats but probably not a content bullet. Drop it from theme slides.
+If a PR body is empty or thin (dependabot, mechanical bumps, broken-fetch entries), it counts in the summary numbers but gets no card.
 
 **Then proceed to Phase 2 with PR-body context in working memory** — not just the title list.
 
@@ -95,89 +94,32 @@ This is reproducible, not double-counted, and scoped to one codebase — defensi
 
 ### Phase 2: Design the Slide Content
 
-Analyze the consolidated report and group PRs into **user-facing themes** (not repo-by-repo). Target 5-6 content slides in this fixed order:
+Fixed structure:
 
-1. **Title slide** — "My Focus: repo1, repo2", date range, author
-2. **Convergence diagram slide (mandatory)** — "The map: all roads lead to <integration target>". Shows how every PR this sprint converges onto a single downstream target (typically the consumer app — DET, a wallet, an SDK release). Sets the frame that subsequent slides drill into. See *Convergence diagram (slide #2)* in Slide HTML Patterns. Always slide #2, never elsewhere.
-3. **2-3 pillar slides** — themed around user benefits, grouping related PRs across repos. Each pillar slide MUST mirror a tile in the convergence diagram and lead with a `PILLAR N` prefix on its heading so the audience can anchor it back to the map.
-4. **Closing stats slide** — two-column layout pairing PR/test/issue chart on the left with a bug-triage donut on the right (when bug-pin data exists). See *Stats closer slide* in Slide HTML Patterns.
+1. **Title** — "My Focus: repo1 & repo2", date range, author.
+2. **Summary** — one block per focus repo: PRs created / merged / closed, one plain line on what the period was about, releases in period ("2 releases: 1.8.0 and 1.8.1"), issues open-before → +opened → −closed → open-after. All numbers one font size, all labels one size. Replaces any stats closer.
+3. **One slide per focus repo** — each theme is one card (3 max), no `PILLAR N` labels. Infra repos (e.g. Tenderdash) add a release timeline above the cards.
 
-**Rationale — diagram-first not reveal-last**: for a recurring bi-weekly with mixed audience (engineering + PM + leadership), placing the convergence diagram early gives the audience a stable mental model they refer back to throughout the deck. Burying it as a closing reveal forces slides 3-5 to be parsed as isolated artifacts and loses the strategic-alignment headline.
+No convergence map, no separate closing stats slide.
 
-#### Content slide rules
-- Catchy headline describing user benefit, not technical change
-- "Who benefits:" subtitle identifying target audience
-- **3 bullets max per slide** — readability over completeness
-- Each bullet: **large headline lead** (block, ~1.35rem, accent blue) + **description below** (block, ~0.95rem, muted) — two-line rhythm, not inline
-- **Repo labels go FIRST**: each bullet's `<span class="bullet-lead">` opens with a `<span class="repo-label repo-det">DET</span>` (or `repo-platform`, `repo-tenderdash`, `repo-dashcore`) pill as a visual prefix to the headline. Buried at the end of long descriptions they get missed; as a prefix they're scannable at a glance
-- PR numbers as small muted pill-badges at end of description — NOT prominent
-- Endpoint/API names in `<code>` tags
-- All bullet titles must be **unique across the entire deck** — no duplicates
+#### Plain language (strict)
+Mixed audience (engineering, PM, leadership). Every heading and card: short plain outcome, few words, no jargon, no clever or enigmatic phrasing, no hedging.
 
-#### Bullet voice — value, not mechanics
-Every `bullet-desc` opens with the **affected audience**: "Clients...", "Operators...", "QA...", "Wallet UI...", "Embedders...", "Release engineering...". State what *changes for that audience*, not what the PR refactored.
+- "Steadier sync, bounded resources" → **"Hardening and performance"**; "Nodes finish syncing without a restart" → **"Faster initial node sync"**.
+- Card = title (2–4 words) + one 2–3 line sentence + optional one short extra line. Name the audience only in the slide's "Who benefits" line.
+- No type/crate/constant names, no internal version constants — use public release labels the user confirms (e.g. "Platform v4.2 beta").
+- Positive framing: say what now exists, not that the old state was broken. Build gates are not QA sign-off.
+- Drop immature/unvalidated work entirely — don't soften it. Omit security-sensitive in-review fixes; fold into a general "hardening" line.
 
-If you cannot articulate a user-visible benefit from the PR body, drop it from theme slides — let it appear only in closing-slide donut counts.
-
-Example: PR "Backport dash-network-seeds bootstrap to SDK" → bullet: "Clients no longer ship hardcoded SDK endpoint lists" (not "Backports network-seeds module").
-
-#### Framing checklist — positive claims, no overclaiming
-This deck goes to a mixed exec/PM/engineering audience; every claim gets scrutinized. Before finalizing:
-
-- **Audit every headline for implied-prior-brokenness.** Phrases like "closes gaps," "no longer confusing," "fixes the mess" imply the prior state was broken or embarrassing. Prefer a positive-framing equivalent that states what now exists: "all data migrated" (not "no data left behind"), "new stack merged" (not "closes gaps in the old one").
-- **Never let a release-cadence claim imply a QA guarantee it doesn't have.** "Ships automatically when CI is green" describes a build gate, not a QA certification — don't word it as if a human/QA team signed off if that didn't happen.
-- **Drop immature or not-well-tested work from headline pillars entirely** — don't downplay it, remove it. A pillar slide implies "this is done and load-bearing"; a feature the user flags as not-yet-validated (even if the underlying PR is substantial) belongs nowhere in the deck until it's hardened, not softened into a smaller bullet.
-
-#### Audience jargon test
-Bi-weekly audience is mixed: engineering + PM + leadership + cross-team. Internal-developer shorthand FAILS for this audience. Run every bullet through this filter:
-
-- **Replace abbreviations with concrete release labels**: not "PV_11" / "PV_12+" / "v3.1-dev", but "Platform v3.0 testnet" / "Platform v3.1+". The audience tracks released versions, not internal protocol-version constants.
-- **Replace type names with what they DO**: not "`Fetch::Query` vs `Fetch::Request`" or "`QueryContext`", but "the encoder now picks the right wire shape for the right network". Type names go in the `<code>` decoration of the description, not the bullet headline.
-- **Replace wire-format jargon with consequence**: not "V0 wire (CBOR `where`) vs V1 (structured)", but "the legacy shape for v3.0 testnet, the structured shape for v3.1+".
-- **Rule of thumb**: if a non-engineer would not recognize the term within 1 second, replace it. Symbol names belong in monospace decoration of the description, never in the headline lead.
-- **Presenter-chosen version labels take precedence**: the presenter may relabel internal constants to public-facing release names (e.g. "Platform v4.0 devnet" for PRs that say `v3.1-dev`/`v3.0 testnet`). Use the label the user specifies. When a version appears on a slide, confirm the public-facing name with the user rather than lifting the literal constant from the PR.
-
-#### Cause → consequence framing
-When a single slide describes both an infrastructure investment (e.g. an e2e test campaign) AND the bug fixes it surfaced, lead with the investment and prefix each consequence bullet with an explicit causal phrase: *"Surfaced & guarded by the harness:"*, *"Also surfaced by:"*, *"Made possible by:"*. The audience reads top-down — cause must precede consequence, not the reverse. Trade-off: this contradicts the natural urge to put a 31k-LoC PR last as the "big finale" — resist it; the campaign is the *cause* of every other bullet on the slide.
-
-#### Stage badges
-- Add `<span class="stage-badge stage-alpha">In Progress</span>` to slide headings for features not yet production-ready
-- CSS classes: `stage-alpha` (amber gradient) for alpha/in-progress, `stage-beta` (purple gradient) for beta
-- Position: inline after heading text, auto-sized ~0.45em relative to heading
-
-#### Status badge rules
-- Each bullet gets exactly one status badge after the PR links
-- Badge types: `badge-merged` (green), `badge-draft` (amber, for in-progress)
-- **If a bullet references multiple PRs and at least one is not merged, mark the whole bullet as "in progress"** — the most conservative status wins
-- Only mark as `merged` when ALL referenced PRs are merged
-
-#### Closing slide: two-column layout (always)
-Use `class="two-col"` grid with two `col-card` elements. See *Stats closer slide* in Slide HTML Patterns for the full layout including the mandatory bug-triage donut category split.
-
-**Left card** — choose the most informative chart for the available data:
-- **Test-coverage horizontal stacked bar** when an e2e/test-spec source is available (preferred when work touched the test surface)
-- **PR donut** (merged / in progress / closed) for pure PR activity
-- **Issue waterfall** (before → +created → −closed → after) when issue churn dominates
-
-**Right card** — `Found-*` / bug-pin triage donut whenever bug-pin metrics exist. Mandatory 4-way split: `Fixed prod bug` (green) / `Has PR` (Dash blue) / `To triage` (amber) / `False positive` (purple). False-positive bucket includes test-framework-only fixes AND spec drift — these are NOT counted as production bug fixes.
-
-**Chart type selection:**
-- **Donut**: good when segments have comparable proportions (e.g., 60/30/10 split)
-- **Waterfall**: better for before/after comparisons with small deltas (e.g., issue counts 60→62 with +3/−1). Donuts fail here because a 95%/5% split is visually meaningless
-
-Each donut card: chart (170-180px), legend with colored dots + labels + counts + space-padded percentage.
-Each waterfall: 4 bars (Before, +Created, −Closed, After) with zoomed Y-axis range, dashed connectors between bars, colored delta labels.
-
-**Number-reconciliation rule**: when a concrete count appears in both the convergence diagram (slide #2) AND the closing donut, they MUST be identical. Always `grep` for the number in the rendered HTML before declaring done. When the triage tile uses a qualitative phrase instead of a count, no reconciliation is needed.
+#### Cards
+- Group related PRs (bodies reveal siblings) into one card; PR numbers as small status-coloured pills.
+- Status: `MERGED` only when every PR in the card is merged; otherwise `IN PROGRESS`.
 
 ### Phase 3: Generate the HTML
 
-Read template at `assets/presentation-template.html`. Replace `{{TITLE}}` and `{{SLIDES}}`.
+Write a Python generator `/data/tmp/weekly-<to-date>/gen.py` that fills `assets/presentation-template.html` (`{{TITLE}}`, `{{SLIDES}}`) — reruns after feedback are then cheap. First slide `class="slide active"`, `data-index` sequential from 0. Output `presentations/YYYY-MM-DDTHHMMSS/index.html`; regenerate into the same dir on revisions.
 
-1. First slide: `class="slide active"`, all others: `class="slide"`
-2. `data-index` sequential from 0
-3. Create timestamped directory: `presentations/YYYY-MM-DDTHHMMSS/`
-4. Write as `index.html` inside that directory
+**Variants**: keep alternates side by side as `index-<variant>.html` in both the presentations dir and the artifacts dir (e.g. `index-no-weekly.html`), each with its own generator copy (`gen-<variant>.py`).
 
 ### Phase 4: Preview and publish
 
@@ -194,7 +136,7 @@ mkdir -p /data/artifacts/daily-report/YYYY-MM-DD
 cp /home/ubuntu/git/daily-report/presentations/YYYY-MM-DDTHHMMSS/index.html /data/artifacts/daily-report/YYYY-MM-DD/
 ```
 
-Report: `http://agentic/daily-report/YYYY-MM-DD/index.html` (also reachable at `http://10.26.0.69/...` from `rocky`). This is nginx-served, persists across reboots, and needs no server process running on the user's end — matches the "self-contained, streamable" delivery model the deck itself is built for (see *No interactive-only affordances*). Re-copy on every edit round; the artifacts path is the one link to keep repeating back to the user, not a fresh `localhost` port each time.
+Report: `http://agentic/daily-report/YYYY-MM-DD/index.html` (also reachable at `http://10.26.0.69/...` from `rocky`). This is nginx-served, persists across reboots, and needs no server process running on the user's end — matches the "self-contained, streamable" delivery model the deck itself is built for (see *No interactive-only affordances*). Copy variants the same way (`index-<variant>.html`). Re-copy on every edit round; the artifacts path is the one link to keep repeating back to the user, not a fresh `localhost` port each time.
 
 #### Playwright QA (optional but recommended for SPA-init verification)
 
@@ -226,94 +168,23 @@ Logo uses the official Dash wordmark SVG in Dash blue (`#008DE4`), not white. So
     <p class="meta">Date Range &middot; Author</p>
     <div class="title-rule"></div>
   </div>
-  <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
 </section>
 ```
 
-### Convergence diagram (mandatory slide #2)
+### Summary slide
 
-The convergence diagram is the deck's strategic frame. Every PR this sprint feeds a single integration target via an umbrella component, broken into 2-4 thematic pillars. The diagram lives at `data-index="1"` (slide #2) — always, no exceptions.
+`two-col` of `col-card`s, one per repo. Top row: three numbers (PRs created / merged / closed) in flex `space-around`; then the plain one-liner + muted releases line; then a divider and an `ISSUES` row `before → +opened → −closed → after` with arrows. Use one number size (2.2rem, weight 800) and one label size (0.95rem, muted) for both rows. Colors: created/opened `#58a6ff`, merged/closed-issues `#3fb950`, closed PRs `#8b949e`.
 
-**Color semantics — green and yellow are RESERVED for PR status.** When status-colored pills are used (see below), green (`#3fb950`) and yellow/amber (`#d29922`) must mean only merged / in-progress respectively — never structural decoration. Recolor any structural elements that would collide: Consumer tile stroke amber → purple `#a371f7`; `PILLAR N` labels amber → gray `#8b949e`; Triage tile stroke amber → gray `#6e7681` dashed; Validation band stroke green → Dash blue `#008DE4` dashed. Keep blue (umbrella, pillar titles, flow arrows) and gray (pillar borders) as structural colors. Add a compact status legend in the SVG's top-right: green swatch "merged", yellow swatch "in progress".
+### Release timeline (infra repo slide)
 
-**PR-number pills** — render each `#NNNN` reference as a small rounded pill with a light tinted background colored by that PR's status: merged → fill `rgba(63,185,80,0.18)` text `#3fb950`; open/in-progress/draft → fill `rgba(217,153,34,0.18)` text `#d29922`. In SVG use `<rect rx>` sized to fit the number text, keep to one line per tile. The same pill style applies to `pr-links` spans on content slides.
-
-**Required tile types** (top → bottom):
-
-1. **Consumer / integration target** (purple `#a371f7` stroke, solid border) — the downstream app or consumer where everything lands. Typically DET, an SDK release, a wallet app. PR pill for the rewrite/integration PR (if any) sits inside. Keep the description to **one concise line (~≤340px text at 1920px)** inside the ~440px tile — do not inline per-PR action labels; let status pills carry per-PR identity.
-2. **Upstream umbrella component** (Dash-blue `#008DE4` stroke, thicker 2.5px border) — the crate/library that owns the work. Audience sees: "this is the seam where all the work converges."
-3. **Pillar tiles** (3-4, gray `#30363d` stroke, transparent fill) — one per content slide. Each tile carries: a `PILLAR N` gray `#8b949e` label, a Dash-blue title matching the next slide's heading, 1-2 lines of plain-English summary, the typed crate/symbol/feature in monospace blue `#79c0ff`, and the PR numbers as status-colored pills.
-4. **Triage backlog tile (when WIP items exist)** — distinct styling: gray `#6e7681` dashed stroke (1.5px, `stroke-dasharray="4 3"`), subtly tinted fill, three large `…` glyph as visual cue, and either a verified exact count or a qualitative phrase (e.g. *"A few shielded findings still being triaged"*). **Only state a concrete count when it comes from a verified source** — do not fabricate numbers. Branch line from umbrella to this tile is dashed gray, signalling "incoming work, not yet landed."
-5. **Validation band** (Dash blue `#008DE4` dashed stroke, optional) — bottom-spanning rect with `VALIDATED BY` label naming the e2e / test campaign. Dashed arrow up to the umbrella component. Blue avoids implying a "passing/green" board.
-
-**Layout math** (viewBox 1180×600):
-- Consumer box at top-center, ~400×74 at y=14
-- Umbrella box centered below, ~500×78 at y=138, branch arrow above
-- 4-tile pillar row at y=290, each tile 250×180, 30px gaps: x=40 / 320 / 600 / 880
-- Validation band at y=526, ~740×50
-
-**Audience-anchor rule**: each pillar slide's heading MUST have a `<span style="color:#d29922;font-size:0.55em;font-weight:700;letter-spacing:0.08em;display:block;margin-bottom:4px;">PILLAR N</span>` prefix matching its tile, so the audience never loses the link back to the map.
-
-```html
-<section class="slide" data-index="1">
-  <div class="slide-inner slide-compact">
-    <h2 class="slide-heading">The map: all roads lead to <target></h2>
-    <p class="slide-subheading"><strong>Who benefits:</strong> The audience &mdash; here's where every PR this sprint converges</p>
-    <svg width="1180" height="600" viewBox="0 0 1180 600" style="display:block;margin:0 auto;">
-      <defs>
-        <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#008DE4"/></marker>
-        <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#8b949e"/></marker>
-        <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#d29922"/></marker>
-      </defs>
-      <!-- Status legend (top-right) -->
-      <rect x="1060" y="10" width="12" height="12" rx="2" fill="rgba(63,185,80,0.18)"/>
-      <text x="1076" y="20" fill="#3fb950" font-size="10">merged</text>
-      <rect x="1060" y="26" width="12" height="12" rx="2" fill="rgba(217,153,34,0.18)"/>
-      <text x="1076" y="36" fill="#d29922" font-size="10">in progress</text>
-      <!-- Consumer (purple — green/amber reserved for status) -->
-      <rect x="390" y="14" width="400" height="74" rx="10" fill="rgba(163,113,247,0.08)" stroke="#a371f7" stroke-width="2"/>
-      <text x="590" y="42" text-anchor="middle" fill="#a371f7" font-size="13" font-weight="700" letter-spacing="0.08em"><CONSUMER LABEL></text>
-      <!-- Umbrella (blue) -->
-      <rect x="340" y="138" width="500" height="78" rx="10" fill="rgba(0,141,228,0.10)" stroke="#008DE4" stroke-width="2.5"/>
-      <text x="590" y="166" text-anchor="middle" fill="#008DE4" font-size="13" font-weight="700" letter-spacing="0.08em">UPSTREAM <SUMMARY></text>
-      <!-- Pillar 1 (gray border) — repeat for pillar 2, 3 with x=320, x=600 -->
-      <rect x="40" y="290" width="250" height="180" rx="8" fill="rgba(13,17,23,0.6)" stroke="#30363d" stroke-width="1.5"/>
-      <text x="165" y="312" text-anchor="middle" fill="#8b949e" font-size="11" font-weight="700" letter-spacing="0.08em">PILLAR 1</text>
-      <!-- PR pill example (merged) -->
-      <rect x="105" y="318" width="48" height="14" rx="4" fill="rgba(63,185,80,0.18)"/>
-      <text x="129" y="329" text-anchor="middle" fill="#3fb950" font-size="9" font-weight="600">#1234</text>
-      <!-- Triage backlog (dashed gray — amber reserved for status) -->
-      <rect x="880" y="290" width="250" height="180" rx="8" fill="rgba(110,118,129,0.06)" stroke="#6e7681" stroke-width="1.5" stroke-dasharray="4 3"/>
-      <text x="1005" y="364" text-anchor="middle" fill="#e6edf3" font-size="28" font-weight="800" letter-spacing="0.18em">&hellip;</text>
-      <text x="1005" y="394" text-anchor="middle" fill="#9eaab6" font-size="11">A few findings still being triaged</text>
-      <!-- Validation band (blue dashed — not green, avoids "passing board" implication) -->
-      <rect x="220" y="526" width="740" height="50" rx="8" fill="rgba(0,141,228,0.06)" stroke="#008DE4" stroke-width="1.5" stroke-dasharray="4 3"/>
-      <text x="590" y="548" text-anchor="middle" fill="#008DE4" font-size="13" font-weight="700" letter-spacing="0.05em">VALIDATED BY</text>
-    </svg>
-  </div>
-</section>
-```
-
-### Stats closer slide
-
-Two-col closing slide pairing a test-coverage or PR/issue chart on the left with a bug-triage donut on the right when bug-pin data is available. Use `class="two-col"` with `grid-template-columns: 1.5fr 1fr` so the chart gets more horizontal room than the donut.
-
-**Bug-triage donut categories (mandatory split):**
-- `Fixed prod bug` (green `#3fb950`) — real production-code fixes, count only confirmed production bugs
-- `Has PR` (Dash blue `#008DE4`) — bug has an open fix-in-flight PR
-- `To triage` (amber `#d29922`) — unimplemented, blocked, or red-by-design
-- `False positive` (purple `#a371f7`) — test-framework-only fixes + spec drift; explicitly NOT counted as production bug fixes
-
-Footer must enumerate the specific pin IDs in each bucket so the audience can audit the classification.
-
-**Internal-consistency rule**: when a concrete count appears in the convergence diagram's triage tile (slide #2), it MUST match the same count on the donut (closing slide). Search the file for both occurrences before declaring done. If the triage tile uses a qualitative phrase, no reconciliation is needed.
+SVG `viewBox="0 0 1240 112"` above the cards: released milestones = solid Dash-blue line + filled `#008DE4` circles, date above, label + short sub-line below, PR pills under. Next planned version = dashed gray line (`stroke-dasharray="4 4"`) + hollow dashed marker, date "Next" unless a verified target date exists (milestone/release PR).
 
 ### Content slide
 
 ```html
 <section class="slide" data-index="N">
   <div class="slide-inner">
-    <h2 class="slide-heading"><span style="color:#d29922;font-size:0.55em;font-weight:700;letter-spacing:0.08em;display:block;margin-bottom:4px;">PILLAR N</span>Theme Title</h2>
+    <h2 class="slide-heading">Repo Name</h2>
     <p class="slide-subheading"><strong>Who benefits:</strong> Audience</p>
     <ul class="bullets">
       <li>
@@ -327,7 +198,6 @@ Footer must enumerate the specific pin IDs in each bucket so the audience can au
       </li>
     </ul>
   </div>
-  <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
 </section>
 ```
 
@@ -335,7 +205,7 @@ Repo label classes: `repo-det` (blue), `repo-platform` (purple), `repo-tenderdas
 
 ### Content slide — infographic card variant (preferred)
 
-**User-confirmed preference, repeated across reviews: an SVG card row reads far better than the plain `<ul class="bullets">` list above.** Default to this pattern for pillar slides; fall back to the bullet list only when a slide genuinely has no room for a wide SVG (e.g. paired with a screenshot in `slide-split`).
+**User-confirmed preference, repeated across reviews: an SVG card row reads far better than the plain `<ul class="bullets">` list above.** Default to this pattern for repo slides; fall back to the bullet list only when a slide genuinely has no room for a wide SVG (e.g. paired with a screenshot in `slide-split`).
 
 Layout: one `<svg viewBox="0 0 1240 400">` holding N side-by-side cards (2-3 typical, one per bullet-equivalent). For 3 cards: `x = 10, 430, 850`, each `width="380" height="320"` at `y="10"` (40px gaps, symmetric 10px outer margins). For 2 cards, widen to keep the row filled rather than leaving a gap — e.g. `width="560"` at `x="10"`/`x="610"` (viewBox stays 1240 wide). Card shell: `rx="10" fill="rgba(13,17,23,0.55)" stroke="#30363d" stroke-width="1.5"`.
 
@@ -363,7 +233,7 @@ Per-card content, all positioned relative to the card's own `x` (call it `cx`), 
 <a href="PR_URL" target="_blank"><rect x="{cx+16}" y="258" width="52" height="20" rx="4" fill="rgba(63,185,80,0.18)"/><text x="{cx+42}" y="272" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="600" font-family="ui-monospace,Menlo,Consolas,monospace">#123</text></a>
 ```
 
-A CTA/QR card can replace the third slot on a pillar row using the same 380×320 shell with `stroke="#008DE4"` and `fill="rgba(0,141,228,0.06)"` — see *QR code / scannable-link pattern* above for the QR image itself; place two side-by-side inside one card (`GET THE BUILD` / `REPORT AN ISSUE`) each with an 80×80 QR image in a white 90×90 rounded rect, and the full `github.com/org/repo/path` (two lines, no scheme needed — it's the complete typeable path that matters) printed underneath in muted monospace.
+A CTA card can replace the third slot on a card row using the same 380×320 shell with `stroke="#008DE4"` and `fill="rgba(0,141,228,0.06)"`: label (e.g. `GET THE BUILD`) plus the full `github.com/org/repo/path` (two lines if needed, no scheme) in muted monospace — no QR code.
 
 ### Content slide with screenshot (split layout)
 
@@ -386,7 +256,6 @@ Use `slide-split` grid for slides with screenshots. Bullets on the left, screens
       </div>
     </div>
   </div>
-  <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
 </section>
 ```
 
@@ -458,53 +327,7 @@ Layout rules:
     <p style="font-size:0.68rem;color:#8b949e;margin-top:8px;">Footnote line 1. Footnote line 2.</p>
     <div class="pr-links" style="flex-wrap:nowrap">#PR credit</div>
   </div>
-  <div class="slide-credits">Co-authored by <a href="https://github.com/lklimek/claudius" target="_blank">Claudius the Magnificent</a> AI</div>
 </section>
-```
-
-### Closing slide (flexible column layout)
-
-Use `two-col` or `three-col` grid. Mix donut and waterfall charts based on data.
-
-**Donut math:** circumference = 2×π×44 = 276.46. Each segment: `stroke-dasharray="ARC 276.46"`. Rotation = -90 + (cumulative_prior / total) × 360.
-
-**Waterfall math:** Pick a zoomed Y-axis range (e.g., 56–64 for values 60/62/63). Scale = chart_height / range. Bars: Before (baseline→start), +Created (floating green), −Closed (floating amber), After (baseline→end). Connect with dashed lines at transition points.
-
-```html
-<!-- Donut card (e.g., PR breakdown) -->
-<div class="col-card">
-  <h3>Pull Requests</h3>
-  <div class="donut-wrap">
-    <svg width="180" height="180" viewBox="0 0 120 120">
-      <circle cx="60" cy="60" r="44" fill="none" stroke="#21262d" stroke-width="14"/>
-      <circle cx="60" cy="60" r="44" fill="none" stroke="#008DE4" stroke-width="14"
-        stroke-dasharray="ARC1 276.46" transform="rotate(-90 60 60)"/>
-      <!-- more segments... -->
-      <text x="60" y="56" text-anchor="middle" fill="#e6edf3" font-size="22" font-weight="800"
-        font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">TOTAL</text>
-      <text x="60" y="72" text-anchor="middle" fill="#8b949e" font-size="9"
-        font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">PRs</text>
-    </svg>
-    <div class="donut-legend"><!-- legend-row items --></div>
-  </div>
-</div>
-
-<!-- Waterfall card (e.g., issue tracker) -->
-<div class="col-card">
-  <h3>dash-evo-tool Issues</h3>
-  <div style="display:flex;flex-direction:column;align-items:center;">
-    <svg width="220" height="180" viewBox="0 0 220 180">
-      <!-- Y-axis: zoomed range, dashed grid line at start value -->
-      <!-- Bar 1: Before — blue, opacity 0.7 -->
-      <!-- Bar 2: +Created — green, floating on top of Before -->
-      <!-- Bar 3: −Closed — amber, floating, hanging from top -->
-      <!-- Bar 4: After — blue, solid -->
-      <!-- Dashed connectors between bar transitions -->
-      <!-- X-axis labels: Before, Created, Closed, After -->
-    </svg>
-  </div>
-  <p class="stat-breakdown" style="margin-top:4px;text-align:center">net <span>+N</span> open issues</p>
-</div>
 ```
 
 **Color palette for charts:**
@@ -518,7 +341,6 @@ Use `two-col` or `three-col` grid. Mix donut and waterfall charts based on data.
 
 - **Slide content pinned to top**: `justify-content: flex-start` with `padding: 100px 80px 60px` — headings stay at a fixed vertical position across slides (no vertical jumping)
 - **Title slide exception**: vertically centered with `justify-content: center`
-- **Credits line**: bottom-left of every slide, last child inside `<section>`
 - **Page counter**: bottom-right (built into template JS)
 - **Three-col grid**: `grid-template-columns: 1fr 1fr 1fr; gap: 24px`
 - **Deck-wide font bump**: raising the root body `font-size` (e.g. 18px→20px) cascades proportionally through every `rem`/`em`-based CSS rule for free. It does NOT touch raw SVG `font-size="N"` attributes — those are absolute px and read the same regardless of body size, so a deck-wide legibility pass needs a second find-and-bump across every inline SVG `text` element.
@@ -527,7 +349,7 @@ Use `two-col` or `three-col` grid. Mix donut and waterfall charts based on data.
 
 - **Self-contained**: all CSS/JS inline in single HTML file. Images can be local file refs (`./`) or base64-encoded
 - **Target resolution**: 1920×1080, responsive down to 1280px
-- **3 bullets per slide max** — readability over completeness
+- **3 cards per slide max** — readability over completeness
 - **Bullet layout**: large headline (block, accent blue) + description below (block, muted) — NOT inline `lead — description`
 - **PR links are subtle** — small monospace pills in muted gray, not the visual focus
 - **Theme headlines** describe user outcomes, not technical changes
@@ -537,18 +359,17 @@ Use `two-col` or `three-col` grid. Mix donut and waterfall charts based on data.
 - **Stage badges**: amber "In Progress" / purple "Beta" pills on headings for pre-release features
 - **Save-Page-As idempotency**: Chrome serializes post-JS DOM, so a saved deck arrives with stale `.active`/`.exit-left` classes, appended dot buttons, and open lightbox state. The nav init block MUST be idempotent: call `dotsEl.replaceChildren()`, reset every slide's `.active`/`.exit-left` to defaults, clear lightbox state, and sync the counter. Test by round-tripping `document.documentElement.outerHTML` to a temp port.
 - **Animation lock queue**: nav JS MUST NOT silently drop keypresses during transitions. Chrome auto-repeat (~50ms) vs animation (~480ms) means rapid presses feel frozen if dropped. Pattern: `let pendingDelta = 0`; when called while `animating`, set `pendingDelta = Math.sign(target - current)`; replay on animation complete; reset.
-- **No interactive-only affordances**: this deck is typically delivered via screen-share/video stream, not driven by the viewer. Anything that looks clickable (a "Learn more" button, a CTA link styled as a button) is non-functional for the audience — replace with a **QR code** and/or a **full, plain-text URL** they can type or scan. Never show a shortened/truncated path (e.g. just `releases` or `…/releases`) under a QR code — it reads as a hint, not a typeable address. The scheme (`https://`) can be omitted, but the full `domain/org/repo/path` must be shown — that's the complete, unambiguous, typeable address.
+- **No interactive-only affordances**: this deck is typically delivered via screen-share/video stream, not driven by the viewer. Anything that looks clickable (a "Learn more" button, a CTA link styled as a button) is non-functional for the audience — show the **full, plain-text URL** instead. Never a shortened/truncated path (e.g. just `releases` or `…/releases`); the scheme (`https://`) can be omitted, but the full `domain/org/repo/path` must be shown.
+- **No QR codes** — security bad practice (trains the audience to scan opaque codes; destination not visible). Plain-text URL only.
 
-### QR code / scannable-link pattern
+### Links to builds / releases
 
-For a slide that needs a scannable destination (release page, issue tracker, docs), fetch a QR PNG at **build time** (not at view time — the deck must stay self-contained) and inline it as base64:
+- **Release builds**: once published (`gh release view <tag> --repo dashpay/R`), point at the exact tag URL `github.com/dashpay/R/releases/tag/<tag>`; print the full path (may wrap to 2 lines); list platforms from the release assets ("Windows · macOS · Linux").
+- Presenting a release that isn't published yet: keep a variant without it (e.g. `index-no-weekly.html`) and tell the user the deck depends on the publish.
 
-```bash
-curl -s "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' 'https://full/url/here')" -o /tmp/qr-name.png
-base64 -w0 /tmp/qr-name.png > /tmp/qr-name.b64
-```
+## Screenshots
 
-Then `Read` the `.b64` file and paste its exact content into `<img src="data:image/png;base64,...">` — **never** type/recall base64 image data from memory; always read it from the file you just generated (a hand-typed or "recalled" base64 string decodes as noise or a corrupt/blank image, and this is easy to get wrong silently). Pair every QR code with the full URL in plain, selectable/legible text underneath — some viewers will prefer to type it over scanning.
+Check PR bodies/comments for attached images first. Fresh DET capture: rebuild the binary (find the target dir via `cargo metadata`), run with a throwaway config dir (never `~/.config/dash-evo-tool`), on a 1920×1080 Xvfb display. Screens needing a funded testnet identity or masternode need user-supplied data. Ask the user before capturing.
 
 ## Assets
 
