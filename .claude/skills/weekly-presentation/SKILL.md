@@ -48,7 +48,7 @@ Per focus repo, via GitHub search (`gh api -X GET search/issues -f q='...' --jq 
 
 - **PRs** — authors `lklimek` + `Claudius-Maginificent`, summed:
   - created: `repo:dashpay/R is:pr author:A created:FROM..TO`
-  - merged: `repo:dashpay/R is:pr author:A merged:FROM..TO` (may include PRs opened earlier)
+  - merged: `repo:dashpay/R is:pr author:A merged:FROM..TO` (may include PRs opened earlier). The search also counts merges into stacked feature branches — check `baseRefName`: work merged only into a feature branch whose PR is still open is **in progress**, not shipped. A repo whose merges all landed on feature branches gets no Summary block, only an `IN PROGRESS` card.
   - closed (unmerged): `repo:dashpay/R is:pr author:A is:unmerged is:closed closed:FROM..TO`
 - **Issues** — whole repo, `is:issue`:
   - opened: `repo:dashpay/R is:issue created:FROM..TO`; closed: `... is:issue closed:FROM..TO`
@@ -98,9 +98,17 @@ Fixed structure:
 
 1. **Title** — "My Focus: repo1 & repo2", date range, author.
 2. **Summary** — one block per focus repo: PRs created / merged / closed, one plain line on what the period was about, releases in period ("2 releases: 1.8.0 and 1.8.1"), issues open-before → +opened → −closed → open-after. All numbers one font size, all labels one size. Replaces any stats closer.
-3. **One slide per focus repo** — each theme is one card (3 max), no `PILLAR N` labels. Infra repos (e.g. Tenderdash) add a release timeline above the cards.
+3. **One slide per focus repo** — each theme is one card (3 max), no `PILLAR N` labels. Infra repos (e.g. Tenderdash) add a release timeline above the cards. A repo with 2–3 big themes gets **one slide per theme** instead (see *Theme slides*). Smaller supporting repos may share one "Foundations" card slide.
 
-No convergence map, no separate closing stats slide.
+No convergence map, no separate closing stats slide, **no agenda/overview slide**.
+
+#### Theme slides (user-confirmed, presented well)
+An overview slide that lists the themes before the theme slides is a third repetition of the same content — the user rejects it. Instead:
+- The Summary one-liner names the themes using **exactly** the theme-slide headings (it is the advance organizer; the presenter says it once).
+- Each theme slide carries an eyebrow strip above the heading: `DASH EVO TOOL  1 Theme A / 2 Theme B / 3 Theme C`, current theme highlighted Dash blue, others muted. Orients the viewer without spoken signposting.
+- One theme per slide; each detail appears once in the deck.
+- A call to action (e.g. `GET THE BUILD`) goes on the **last** slide of the section, after the audience has seen what they get.
+- Summary for a repo with no release in the period: "Latest release: X".
 
 #### Plain language (strict)
 Mixed audience (engineering, PM, leadership). Every heading and card: short plain outcome, few words, no jargon, no clever or enigmatic phrasing, no hedging.
@@ -117,7 +125,7 @@ Mixed audience (engineering, PM, leadership). Every heading and card: short plai
 
 ### Phase 3: Generate the HTML
 
-Write a Python generator `/data/tmp/weekly-<to-date>/gen.py` that fills `assets/presentation-template.html` (`{{TITLE}}`, `{{SLIDES}}`) — reruns after feedback are then cheap. First slide `class="slide active"`, `data-index` sequential from 0. Output `presentations/YYYY-MM-DDTHHMMSS/index.html`; regenerate into the same dir on revisions.
+Write a Python generator `/data/tmp/weekly-<to-date>/gen.py` that fills `assets/presentation-template.html` (`{{TITLE}}`, `{{SLIDES}}`) — reruns after feedback are then cheap. First slide `class="slide active"`, `data-index` sequential from 0. Output `presentations/YYYY-MM-DDTHHMMSS/index.html`; regenerate into the same dir on revisions. Start from the previous deck's generator if one exists (`/data/artifacts/daily-report/<prev-date>/src/gen.py`); when done, persist `gen.py` and its inputs (reports, digests, counts) to `/data/artifacts/daily-report/<to-date>/src/` — `/data/tmp` is wiped on reboot.
 
 **Variants**: keep alternates side by side as `index-<variant>.html` in both the presentations dir and the artifacts dir (e.g. `index-no-weekly.html`), each with its own generator copy (`gen-<variant>.py`).
 
@@ -136,7 +144,7 @@ mkdir -p /data/artifacts/daily-report/YYYY-MM-DD
 cp /home/ubuntu/git/daily-report/presentations/YYYY-MM-DDTHHMMSS/index.html /data/artifacts/daily-report/YYYY-MM-DD/
 ```
 
-Report: `http://agentic/daily-report/YYYY-MM-DD/index.html` (also reachable at `http://10.26.0.69/...` from `rocky`). This is nginx-served, persists across reboots, and needs no server process running on the user's end — matches the "self-contained, streamable" delivery model the deck itself is built for (see *No interactive-only affordances*). Copy variants the same way (`index-<variant>.html`). Re-copy on every edit round; the artifacts path is the one link to keep repeating back to the user, not a fresh `localhost` port each time.
+Report: `http://agentic/artifacts/daily-report/YYYY-MM-DD/index.html` (nginx redirects the shorter `http://agentic/daily-report/...` there with a 302; verify with `curl -sL -o /dev/null -w '%{http_code} %{url_effective}'`; also reachable at `http://10.26.0.69/...` from `rocky`). This is nginx-served, persists across reboots, and needs no server process running on the user's end — matches the "self-contained, streamable" delivery model the deck itself is built for (see *No interactive-only affordances*). Copy variants the same way (`index-<variant>.html`). Re-copy on every edit round; the artifacts path is the one link to keep repeating back to the user, not a fresh `localhost` port each time.
 
 #### Playwright QA (optional but recommended for SPA-init verification)
 
@@ -144,6 +152,7 @@ Report: `http://agentic/daily-report/YYYY-MM-DD/index.html` (also reachable at `
 - Navigate with paced delays (~200ms+ between keypresses) to avoid triggering the animation-lock queue unintentionally
 - **`playwright-cli eval` gotcha**: any string containing `=>` is treated as an element-handler function. Pass a single `() => <expr>` arrow function. An IIFE like `(()=>{…})()` fails with "result is not a function".
 - **`playwright-cli run-code` gotcha**: sandboxed — no `require`, no dynamic `import`. Do not use it for multi-step logic that needs Node APIs.
+- **Fit check**: at 1920×1080, 1920×950, 1536×864 and 1280×720, `eval` each `.slide-inner` bottom (`getBoundingClientRect().bottom`) and `scrollHeight > clientHeight`; content must end above the progress dots (~viewport height − 60px). Look at a screenshot of every screenshot-bearing slide.
 - **Save-Page-As round-trip**: capture `document.documentElement.outerHTML` via `eval`, write it to a temp file with Python (not `run-code`), serve on a fresh port, reopen — assert: slide resets to slide 0, dots not duplicated, no stale `exit-left` class, lightbox closed.
 
 ## Slide HTML Patterns
@@ -205,7 +214,7 @@ Repo label classes: `repo-det` (blue), `repo-platform` (purple), `repo-tenderdas
 
 ### Content slide — infographic card variant (preferred)
 
-**User-confirmed preference, repeated across reviews: an SVG card row reads far better than the plain `<ul class="bullets">` list above.** Default to this pattern for repo slides; fall back to the bullet list only when a slide genuinely has no room for a wide SVG (e.g. paired with a screenshot in `slide-split`).
+**User-confirmed preference, repeated across reviews: an SVG card row reads far better than the plain `<ul class="bullets">` list above.** Default to this pattern for repo slides without screenshots (with screenshots, use *Theme slide — points + screenshots*); fall back to the bullet list only when a slide genuinely has no room for a wide SVG (e.g. paired with a screenshot in `slide-split`).
 
 Layout: one `<svg viewBox="0 0 1240 400">` holding N side-by-side cards (2-3 typical, one per bullet-equivalent). For 3 cards: `x = 10, 430, 850`, each `width="380" height="320"` at `y="10"` (40px gaps, symmetric 10px outer margins). For 2 cards, widen to keep the row filled rather than leaving a gap — e.g. `width="560"` at `x="10"`/`x="610"` (viewBox stays 1240 wide). Card shell: `rx="10" fill="rgba(13,17,23,0.55)" stroke="#30363d" stroke-width="1.5"`.
 
@@ -235,6 +244,38 @@ Per-card content, all positioned relative to the card's own `x` (call it `cx`), 
 
 A CTA card can replace the third slot on a card row using the same 380×320 shell with `stroke="#008DE4"` and `fill="rgba(0,141,228,0.06)"`: label (e.g. `GET THE BUILD`) plus the full `github.com/org/repo/path` (two lines if needed, no scheme) in muted monospace — no QR code.
 
+### Theme slide — points + screenshots (preferred when screenshots exist)
+
+Eyebrow strip, heading with status badge, "Who benefits", a row of 3 points, then a screenshot row on the **same grid** (same columns and gap) so each image sits under the point it illustrates. Use the same layout on every theme slide of a section; a theme with only 2 images uses a 2-column image row; the last slide may pair one image (`1.9fr`) with the CTA box (`1fr`). A theme with no usable screenshot yet uses the SVG card row until captures arrive.
+
+```html
+<div style="font-size:0.8rem;letter-spacing:0.04em;margin-bottom:10px;white-space:nowrap;">
+  <span style="color:#8b949e;font-weight:700;letter-spacing:0.08em;margin-right:18px;">DASH EVO TOOL</span>
+  <span style="color:#008DE4;font-weight:700;">1&nbsp;&nbsp;Theme A</span>
+  <span style="color:#30363d;margin:0 14px;">/</span>
+  <span style="color:#6e7681;">2&nbsp;&nbsp;Theme B</span>
+</div>
+<h2 class="slide-heading">Theme A <span class="stage-badge" style="background:#238636;color:#fff;">Merged</span></h2>
+<p class="slide-subheading" style="margin-bottom:26px;"><strong>Who benefits:</strong> Audience</p>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:36px;margin-bottom:28px;">
+  <div>
+    <div style="font-size:1.25rem;font-weight:700;color:#008DE4;line-height:1.3;margin-bottom:6px;">Point title</div>
+    <div style="font-size:0.95rem;color:#c9d1d9;line-height:1.5;margin-bottom:8px;">One or two plain sentences.</div>
+    <span class="pr-links"><a href="PR_URL" target="_blank">#123</a></span>
+  </div>
+  <!-- 2 more points -->
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:36px;align-items:start;">
+  <div class="screenshot-wrap" style="min-height:0;flex-direction:column;">
+    <img src="data:image/png;base64,..." alt="Screen name" style="width:auto;max-width:100%;max-height:max(160px, calc(100vh - 540px));">
+    <div style="font-size:0.8rem;color:#8b949e;margin-top:8px;">Screen: what to look at</div>
+  </div>
+  <!-- 2 more images -->
+</div>
+```
+
+The `max-height` keeps the slide inside the viewport down to 1280×720. Caption = screen name + what to look at, in plain words.
+
 ### Content slide with screenshot (split layout)
 
 Use `slide-split` grid for slides with screenshots. Bullets on the left, screenshot on the right. Images can be local file refs (`./filename.png`) or base64-encoded for self-contained HTML.
@@ -260,7 +301,7 @@ Use `slide-split` grid for slides with screenshots. Bullets on the left, screens
 ```
 
 Screenshot behavior:
-- Images scale to fill column width (`width: 100%`, no max-height cap)
+- Images scale to fill column width (`width: 100%`, no max-height cap in this split layout)
 - Hover shows blue border + zoom-in cursor
 - Click opens fullscreen lightbox overlay (95vw/95vh), close with click or Escape
 - Lightbox element + JS must be in template (see `presentation-template.html`)
@@ -369,7 +410,14 @@ Layout rules:
 
 ## Screenshots
 
-Check PR bodies/comments for attached images first. Fresh DET capture: rebuild the binary (find the target dir via `cargo metadata`), run with a throwaway config dir (never `~/.config/dash-evo-tool`), on a 1920×1080 Xvfb display. Screens needing a funded testnet identity or masternode need user-supplied data. Ask the user before capturing.
+Check PR bodies/comments for attached images first, then a DET visual-diff gallery if one exists (`/data/artifacts/dash-evo-tool/<date>/visual-diff/`: `new/` plain captures, `annotated/` 2× with changes outlined, `README.md` lists what was not reproducible). Fresh DET capture: rebuild the binary (find the target dir via `cargo metadata`), run with a throwaway config dir (never `~/.config/dash-evo-tool`), on a 1920×1080 Xvfb display. Screens needing a funded testnet identity or masternode need user-supplied data. Ask the user before capturing.
+
+- **Real data beats empty states.** If only empty screens exist, ask the user for recaptures with loaded wallets/identities and list exactly which screens, in priority order.
+- **Don't wait for captures**: build with what exists, keep screenshot slots swappable, regenerate when new ones land. In `gen.py`, keep an `IMAGES` dict of `key → (path, crop box or None)`; crop and base64-embed with PIL at generation time.
+- **Crop to the region of interest** — full 1280×800 windows are unreadable in a 3-column row. Keep the same aspect within one image row.
+- **Plain vs annotated**: a whole new screen → plain capture; a small change in an existing screen → annotated (outlined) crop. Crop out "Removed" boxes and old-build insets — they confuse a live audience.
+- **Check every image** for recovery phrases, private keys, and real people's photos (profile pictures); flag the latter to the user.
+- **Text must not claim what the screenshot or the visual-diff README contradicts** (e.g. a behaviour marked "not reproducible") — drop the claim.
 
 ## Assets
 
