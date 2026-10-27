@@ -79,7 +79,7 @@
   /* -- Slide inner layout ----------------------------------------------- */
   .slide-inner {
     width: 100%;
-    max-width: 1320px;
+    max-width: 1720px;
   }
 
   /* -- Title slide ------------------------------------------------------ */
@@ -575,6 +575,10 @@
     font-weight: 700;
     color: #c9d1d9;
   }
+
+  /* -- Short viewports (laptops, 1280x720): shrink instead of overflowing -- */
+  @media (max-height: 900px) { .slide { padding-top: 70px; } .slide-inner { zoom: 0.9; } }
+  @media (max-height: 760px) { .slide { padding-top: 46px; } .slide-inner { zoom: 0.78; } }
 </style>
 </head>
 <body>

@@ -44,13 +44,13 @@ Then read both files and treat the union as the input for Phase 2. Deduplicate P
 
 ### Phase 1b: Summary counts (mandatory)
 
-Per focus repo, via GitHub search (`gh api -X GET search/issues -f q='...' --jq .total_count`), range `FROM..TO` inclusive:
+Per focus repo, via GitHub search (`gh api -X GET search/issues -f q='...' --jq .total_count`), range `FROM..TO` inclusive. Search allows ~30 requests/min: pace calls ~2.5 s apart, or HTTP 403.
 
 - **PRs** — authors `lklimek` + `Claudius-Maginificent`, summed:
   - created: `repo:dashpay/R is:pr author:A created:FROM..TO`
   - merged: `repo:dashpay/R is:pr author:A merged:FROM..TO` (may include PRs opened earlier). The search also counts merges into stacked feature branches — check `baseRefName`: work merged only into a feature branch whose PR is still open is **in progress**, not shipped. A repo whose merges all landed on feature branches gets no Summary block, only an `IN PROGRESS` card.
   - closed (unmerged): `repo:dashpay/R is:pr author:A is:unmerged is:closed closed:FROM..TO`
-- **Issues** — whole repo, `is:issue`:
+- **Issues** — only for repos whose issues the team triages (DET, Tenderdash; not Platform). Whole repo, `is:issue`:
   - opened: `repo:dashpay/R is:issue created:FROM..TO`; closed: `... is:issue closed:FROM..TO`
   - open after: `... is:issue is:open` (confirm nothing opened/closed after TO); open before = after − opened + closed. Cross-check "before" against the previous deck's "after".
   - Verify any `0` by listing (`gh issue list --state closed --search "closed:FROM..TO"`).
@@ -76,6 +76,10 @@ For each PR, extract three things and use them when writing the bullet:
 
 If a PR body is empty or thin (dependabot, mechanical bumps, broken-fetch entries), it counts in the summary numbers but gets no card.
 
+**Many PRs:** spawn one `sonnet` digest agent per repo; it reads the bodies and writes `/data/tmp/weekly-<to-date>/digest-<repo>.md` (user-visible outcome, evidence, siblings, status, in-release?). The bodies stay out of the coordinator's context.
+
+**Release storyline:** check each PR against the release tag (`git tag --contains <merge-sha>`). Work on the next dev branch (e.g. `v5.1-dev`) is not "in 5.0.0". Read pinned component versions from the release source (e.g. the Tenderdash version in Platform's `Cargo.toml`).
+
 **Then proceed to Phase 2 with PR-body context in working memory** — not just the title list.
 
 ### Phase 1d: Code-volume metrics (optional, use with caution)
@@ -94,20 +98,37 @@ This is reproducible, not double-counted, and scoped to one codebase — defensi
 
 ### Phase 2: Design the Slide Content
 
-Fixed structure:
+Structure (user-confirmed 2026-10-27, presented well):
 
-1. **Title** — "My Focus: repo1 & repo2", date range, author.
-2. **Summary** — one block per focus repo: PRs created / merged / closed, one plain line on what the period was about, releases in period ("2 releases: 1.8.0 and 1.8.1"), issues open-before → +opened → −closed → open-after. All numbers one font size, all labels one size. Replaces any stats closer.
-3. **One slide per focus repo** — each theme is one card (3 max), no `PILLAR N` labels. Infra repos (e.g. Tenderdash) add a release timeline above the cards. A repo with 2–3 big themes gets **one slide per theme** instead (see *Theme slides*). Smaller supporting repos may share one "Foundations" card slide.
+1. **Title** — with a storyline (e.g. a platform release), a **hub** slide. The storyline sits in a centre circle (name, version, release date). Spokes lead to one box per project, each with:
+   - name and version (or the ETA, e.g. "later this week", if unreleased);
+   - a few words on what the project is;
+   - a one-line foot tying it to the storyline ("Required for testnet", "Runs Platform 5.0.0").
+
+   Reference: `hub_slide()` in `/data/artifacts/daily-report/2026-10-27/src/gen.py`. Without a storyline, use "My Focus: repo1 & repo2", the date range and the author.
+2. **Project sections**, in hub order.
+   - Every heading is prefixed with the project (`DET: New token options`, `Platform: Client libraries`, `clauDASH: Claude Code skills`, `Tenderdash: Next release`).
+   - Each theme is one card (3 max), with no `PILLAR N` labels.
+   - Infra repos (e.g. Tenderdash) add a release timeline above the cards.
+   - A repo with 2–3 big themes gets **one slide per theme** (see *Theme slides*).
+   - The main product's section ends with a *What's next* slide.
+   - Work outside the storyline goes on its own slide after the storyline sections.
+3. **Summary** — the **last** slide, one block per focus repo:
+   - PRs created / merged / closed;
+   - one plain line on what the period was about;
+   - releases in the period ("2 releases: 1.8.0 and 1.8.1");
+   - issues: open-before → +opened → −closed → open-after (triaged repos only).
+
+   Use one font size for all numbers and one for all labels.
 
 No convergence map, no separate closing stats slide, **no agenda/overview slide**.
 
 #### Theme slides (user-confirmed, presented well)
 An overview slide that lists the themes before the theme slides is a third repetition of the same content — the user rejects it. Instead:
-- The Summary one-liner names the themes using **exactly** the theme-slide headings (it is the advance organizer; the presenter says it once).
-- Each theme slide carries an eyebrow strip above the heading: `DASH EVO TOOL  1 Theme A / 2 Theme B / 3 Theme C`, current theme highlighted Dash blue, others muted. Orients the viewer without spoken signposting.
+- The hub is the advance organizer. The hub and the Summary use **exactly** the theme-slide headings.
+- **Every** content slide carries an eyebrow strip above the heading: `DASH EVO TOOL  1 Theme A / 2 Theme B / 3 Theme C`. The current theme is in Dash blue, the others muted. This orients the viewer without spoken signposting. Single-slide projects (`CLAUDASH  1 Claude Code skills`) and the Summary (`SUMMARY  <period>`) carry one too.
 - One theme per slide; each detail appears once in the deck.
-- A call to action (e.g. `GET THE BUILD`) goes on the **last** slide of the section, after the audience has seen what they get.
+- A call to action (e.g. `GET THE BUILD`) goes on the slide that gives the reason to get it (a required update). Otherwise it goes on the last shipped-theme slide.
 - Summary for a repo with no release in the period: "Latest release: X".
 
 #### Plain language (strict)
@@ -118,14 +139,35 @@ Mixed audience (engineering, PM, leadership). Every heading and card: short plai
 - No type/crate/constant names, no internal version constants — use public release labels the user confirms (e.g. "Platform v4.2 beta").
 - Positive framing: say what now exists, not that the old state was broken. Build gates are not QA sign-off.
 - Drop immature/unvalidated work entirely — don't soften it. Omit security-sensitive in-review fixes; fold into a general "hardening" line.
+- **User value first:** when there are enough user-facing items (3 per slide), drop technical ones (refactors, CI, test infra, internal APIs).
+- Words that imply an earlier flaw are negative framing. Example: "Safe keys for apps" becomes **"Keys with more control"**.
+- **Little-known tools** (e.g. clauDASH): assume the audience has never heard of them. Give one line on what the tool is, the install commands, and a sample question it answers.
+
+#### What's next slide
+- One slide for the main product, last in its section. Title it `<PREFIX>: What's next` (not "Coming soon") with an "In review" badge.
+- 3 cards from open PRs, chosen by user-visible change, with plain user-level headlines ("One simple Send form"). No screenshots.
+- Prefer items tied to the storyline. Offer the runners-up to the user as alternatives.
+
+#### Required updates and unreleased builds
+- **Required release** (e.g. a network upgrade): say why in plain words, e.g. "Testnet runs Dash Core 24 and Platform 5.0.0; earlier builds cannot follow it". Say it in four places:
+  - the hub foot (amber);
+  - a banner on the section's first slide;
+  - the CTA box;
+  - the Summary releases line.
+- **Not yet published:** use the user's ETA ("later this week"). Keep `WEEKLY_TAG = None` in `gen.py`, and switch the CTA to the tag URL once the release is out.
 
 #### Cards
 - Group related PRs (bodies reveal siblings) into one card; PR numbers as small status-coloured pills.
-- Status: `MERGED` only when every PR in the card is merged; otherwise `IN PROGRESS`.
+- Status: `MERGED` only when every PR in the card is merged; otherwise `IN PROGRESS`. The user's word overrides merge state: if someone is still fixing it, mark it `IN PROGRESS`.
+- User-impact caveats (e.g. "Dash Core 24 may still affect old installs: update anyway") go on an amber evidence line. In `gen.py`, `svg_card` evidence lines that start with `!` render amber.
 
 ### Phase 3: Generate the HTML
 
 Write a Python generator `/data/tmp/weekly-<to-date>/gen.py` that fills `assets/presentation-template.html` (`{{TITLE}}`, `{{SLIDES}}`) — reruns after feedback are then cheap. First slide `class="slide active"`, `data-index` sequential from 0. Output `presentations/YYYY-MM-DDTHHMMSS/index.html`; regenerate into the same dir on revisions. Start from the previous deck's generator if one exists (`/data/artifacts/daily-report/<prev-date>/src/gen.py`); when done, persist `gen.py` and its inputs (reports, digests, counts) to `/data/artifacts/daily-report/<to-date>/src/` — `/data/tmp` is wiped on reboot.
+
+Template already caps `.slide-inner` at 1720px and zooms it to 0.9 below 900px height and to 0.78 below 760px. Fix any remaining overflow with `max-height: calc(100vh - N)` on the image or card row.
+
+**Gotcha:** inline `style` strings that contain `{max_h}` must be f-strings. A plain string leaves the literal text in place, and the cap silently does nothing.
 
 **Variants**: keep alternates side by side as `index-<variant>.html` in both the presentations dir and the artifacts dir (e.g. `index-no-weekly.html`), each with its own generator copy (`gen-<variant>.py`).
 
@@ -137,7 +179,7 @@ The local HTTP server is an **author-side QA tool only** — never hand its URL 
 python3 -m http.server 8244 --directory /home/ubuntu/git/daily-report/presentations/YYYY-MM-DDTHHMMSS
 ```
 
-Run in background, use it for your own Playwright QA pass (see below), then **kill it**. Once the deck is verified, copy the finished `index.html` to the shared artifacts location and report that link instead:
+Run in background, use it for your own Playwright QA pass (see below), then **kill it** with `pkill -f 'http.serve[r] 8244'` as a separate command. If the same command line also contains `http.server 8244`, pkill matches its own shell and kills it (exit 144). Once the deck is verified, copy the finished `index.html` to the shared artifacts location and report that link instead:
 
 ```bash
 mkdir -p /data/artifacts/daily-report/YYYY-MM-DD
@@ -246,7 +288,7 @@ A CTA card can replace the third slot on a card row using the same 380×320 shel
 
 ### Theme slide — points + screenshots (preferred when screenshots exist)
 
-Eyebrow strip, heading with status badge, "Who benefits", a row of 3 points, then a screenshot row on the **same grid** (same columns and gap) so each image sits under the point it illustrates. Use the same layout on every theme slide of a section; a theme with only 2 images uses a 2-column image row; the last slide may pair one image (`1.9fr`) with the CTA box (`1fr`). A theme with no usable screenshot yet uses the SVG card row until captures arrive.
+**Every slide with screenshots uses this layout. Never mix it with the split layout.** Text goes above the images, so the presenter can narrate top-down. The slide has an eyebrow strip, a heading with status badge, "Who benefits", a row of 3 points, then a screenshot row on the **same grid** (same columns and gap) so each image sits under the point it illustrates. Use the same layout on every theme slide of a section; a theme with only 2 images uses a 2-column image row; the last slide may pair one image (`1.9fr`) with the CTA box (`1fr`). A theme with no usable screenshot yet uses the SVG card row until captures arrive.
 
 ```html
 <div style="font-size:0.8rem;letter-spacing:0.04em;margin-bottom:10px;white-space:nowrap;">
@@ -276,9 +318,9 @@ Eyebrow strip, heading with status badge, "Who benefits", a row of 3 points, the
 
 The `max-height` keeps the slide inside the viewport down to 1280×720. Caption = screen name + what to look at, in plain words.
 
-### Content slide with screenshot (split layout)
+### Content slide with screenshot (split layout, legacy)
 
-Use `slide-split` grid for slides with screenshots. Bullets on the left, screenshot on the right. Images can be local file refs (`./filename.png`) or base64-encoded for self-contained HTML.
+Legacy: do not use it for theme slides (see above). It is documented here for the lightbox behaviour. Bullets on the left, screenshot on the right. Images can be local file refs (`./filename.png`) or base64-encoded for self-contained HTML.
 
 ```html
 <section class="slide" data-index="N">
@@ -410,11 +452,11 @@ Layout rules:
 
 ## Screenshots
 
-Check PR bodies/comments for attached images first, then a DET visual-diff gallery if one exists (`/data/artifacts/dash-evo-tool/<date>/visual-diff/`: `new/` plain captures, `annotated/` 2× with changes outlined, `README.md` lists what was not reproducible). Fresh DET capture: rebuild the binary (find the target dir via `cargo metadata`), run with a throwaway config dir (never `~/.config/dash-evo-tool`), on a 1920×1080 Xvfb display. Screens needing a funded testnet identity or masternode need user-supplied data. Ask the user before capturing.
+For DET, prefer the release-review dir if one exists: `/data/artifacts/dash-evo-tool/<date>/release-review/` (`screenshots/` holds plain 1280×800 captures, `visual-diff/new|annotated/` the before/after diffs). It is near-final; regenerate the deck when it changes. Otherwise check PR bodies/comments for attached images first, then a DET visual-diff gallery if one exists (`/data/artifacts/dash-evo-tool/<date>/visual-diff/`: `new/` plain captures, `annotated/` 2× with changes outlined, `README.md` lists what was not reproducible). Fresh DET capture: rebuild the binary (find the target dir via `cargo metadata`), run with a throwaway config dir (never `~/.config/dash-evo-tool`), on a 1920×1080 Xvfb display. Screens needing a funded testnet identity or masternode need user-supplied data. Ask the user before capturing.
 
 - **Real data beats empty states.** If only empty screens exist, ask the user for recaptures with loaded wallets/identities and list exactly which screens, in priority order.
 - **Don't wait for captures**: build with what exists, keep screenshot slots swappable, regenerate when new ones land. In `gen.py`, keep an `IMAGES` dict of `key → (path, crop box or None)`; crop and base64-embed with PIL at generation time.
-- **Crop to the region of interest** — full 1280×800 windows are unreadable in a 3-column row. Keep the same aspect within one image row.
+- **Crop to the region of interest** — full 1280×800 windows are unreadable in a 3-column row. Keep the same aspect ratio (±5%) within one image row so the images line up.
 - **Plain vs annotated**: a whole new screen → plain capture; a small change in an existing screen → annotated (outlined) crop. Crop out "Removed" boxes and old-build insets — they confuse a live audience.
 - **Check every image** for recovery phrases, private keys, and real people's photos (profile pictures); flag the latter to the user.
 - **Text must not claim what the screenshot or the visual-diff README contradicts** (e.g. a behaviour marked "not reproducible") — drop the claim.
