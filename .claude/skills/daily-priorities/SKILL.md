@@ -126,8 +126,7 @@ this fallback's scope or any MemCan failure under "What the scan missed".
 Report throughput for the **previous working day** (D): Monday → previous
 Friday, otherwise yesterday; local date (Europe/Warsaw). Collect for both
 users (`lklimek` and Claudius-Maginificent), then report combined totals —
-deduplicate PRs both touched (e.g. one authored, the other reviewed counts
-once per kind). Search qualifiers fail for an
+deduplicate PRs both touched (each PR counts once per kind). Search qualifiers fail for an
 unsearchable user; count theirs from the Events API instead (scope:
 `enumerated_owners` only — that is sufficient):
 `gh api 'users/<u>/events?per_page=100' --paginate` (concatenated pages:
@@ -136,7 +135,7 @@ whose repo owner is in `enumerated_owners`; collect PR numbers from
 `PullRequestEvent` / `PullRequestReview[Comment]Event`, then
 `gh pr view --json author,state,mergedAt,closedAt,createdAt` each and
 classify by author and timestamps — a `merged` event means the user merged
-it, not authored it; reviews on the user's own PRs do not count. The API
+it, not authored it; reviews on our own PRs (either user's) do not count. The API
 keeps ≤300 events / 90 days: if the oldest event is after D, fall back to
 GraphQL `pullRequests(orderBy:UPDATED_AT)` per repo, or report unknown:
 
@@ -144,8 +143,11 @@ GraphQL `pullRequests(orderBy:UPDATED_AT)` per repo, or report unknown:
   `gh search prs --author <u> --merged-at D`, `--closed D`, `--created D`
   (`--json number,repository,title,state`). A PR opened and merged on D
   counts in both.
-- Reviews: PRs reviewed by us and updated on D (`--reviewed-by <u> --updated D`),
-  of which merged.
+- Reviews: distinct PRs **not authored by lklimek or Claudius-Maginificent**
+  on which either submitted a review on D, of which merged. Candidates:
+  `--reviewed-by <u> --updated ">=D"` plus the Events review PRs; confirm via
+  GraphQL `reviews(last:100){nodes{author{login} submittedAt}}` (a later
+  update hides D's reviews from `--updated D`).
 - Issues in `--issue-repos` + assigned to us: closed / opened on D
   (`gh search issues ... --closed D` / `--created D`).
 - MemCan TODOs from the same export: `completed_at` on D split into `done`
